@@ -39,7 +39,7 @@ func buildSettingsViewModelsXPC() -> AnyObject? {
     let bundleID = Bundle.main.bundleIdentifier ?? "studio.prototype.DuoWallpaper.extension"
     let directory = dataDirectory()
     try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    _ = try? AngleBridge(url: directory.appendingPathComponent("duo-state.bin"), create: true)
+    _ = try? AngleBridge(url: directory.appendingPathComponent(DuoWallpaperPaths.angleBridgeName), create: true)
     let thumbnail = directory.appendingPathComponent(DuoWallpaperPaths.thumbnailName)
     let custom = directory.appendingPathComponent(DuoWallpaperPaths.customWallpaperName)
     let thumbnailImage = NSImage(contentsOf: custom)?.cgImage(forProposedRect: nil, context: nil, hints: nil) ?? DuoBackdrop.image()

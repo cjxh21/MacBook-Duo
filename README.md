@@ -18,13 +18,15 @@ open "MacBook Duo.app"
 
 构建脚本生成当前 Mac 架构的应用，并内置 `Contents/Extensions/DuoWallpaper.appex`。Metal 着色器在运行时编译。应用使用 ad-hoc 签名，属于未公证的开发版。
 
-如果同时安装多个 SDK 后出现 `this SDK is not supported by the compiler`，请为该次构建指定与 Swift 编译器匹配的 SDK。例如，本机 Swift 6.3.3 可使用已安装的 macOS 26.5 SDK：
+若默认 SDK 出现 `this SDK is not supported by the compiler` 或缺少 `SwiftUIMacros` 插件，可为当次构建指定兼容的 SDK。以下示例使用已安装的 Command Line Tools 和 macOS 26.5 SDK：
 
 ```sh
-SDKROOT="$(xcode-select -p)/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk" ./build.sh
+DEVELOPER_DIR=/Library/Developer/CommandLineTools \
+SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk \
+./build.sh
 ```
 
-此示例适用于完整 Xcode；仅安装 Command Line Tools 时，请使用其 `SDKs/` 下实际存在的匹配版本。
+请使用本机实际存在的 SDK 路径；使用完整 Xcode 时，将上述路径换成对应的开发工具和 SDK 目录。
 
 开发版每次构建首次启动会重置**本应用**的屏幕录制授权，随后仍需用户在系统界面授权；详见 [PERMISSIONS.md](PERMISSIONS.md)。
 
@@ -39,15 +41,17 @@ SDKROOT="$(xcode-select -p)/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.
 
 ### 未锁屏息屏后的唤醒动画
 
-启用效果后，屏幕在未锁屏状态下息屏、再次唤醒，会自动播放一次翻盖动画。新桌面画面完成首次 GPU 绘制后才开始计时；重复唤醒通知不会重新播放，锁屏会取消桌面动画。
+启用效果后，屏幕在未锁屏状态下闲置息屏、再次唤醒，会自动播放一次翻盖动画。新桌面画面完成首次 GPU 绘制后才开始计时；重复唤醒通知不会重新播放或重置画面。应用核对实际屏幕和会话状态，恢复遗漏唤醒通知时残留的暂停状态，也保留息屏期间临时锁定、唤醒后立即自动解锁的桌面动画。仍停留在锁屏界面时不显示桌面覆盖层；预先手动锁屏或延迟解锁走锁屏壁纸动画。
 
-设置窗口 →「效果」→「息屏唤醒动画」中的「动画耗时」支持 **0.3、0.6、0.9、1.5、2、3 秒**，默认 **0.9 秒**，选择会自动保存，并与菜单栏「息屏唤醒动画耗时」同步。该选项调节桌面动画；锁屏壁纸的自动翻页仍为 0.9 秒。
+设置窗口 →「效果」→「息屏唤醒动画」中的「动画耗时」支持 **0.3、0.6、0.9、1.5、2、3 秒**，默认 **0.9 秒**，选择会自动保存，并与菜单栏「息屏唤醒动画耗时」同步。桌面与锁屏壁纸共用此耗时设置。
+
+设置中的「预览翻盖动画」可按当前耗时立即播放一次，预览会启用实时桌面效果。
 
 ## 锁屏壁纸
 
 在设置的壁纸页导入 PNG、JPEG、HEIC 或 TIFF 图片，再到系统设置 → 墙纸中选择「MacBook Duo · 锁屏壁纸」下的「Duo · 随开合变化（自定义）」。扩展依赖主应用提供铰链快照，使用时保持主应用运行。
 
-锁屏壁纸沿用主应用的展开终点、预测、磨砂和边缘柔和度。展开状态下息屏后唤醒且取得新鲜角度数据时，播放一次 0.9 秒翻页；实际开合继续跟随传感器。扩展只改变壁纸背景，时钟、密码框和输入控件由 macOS 管理。
+锁屏壁纸沿用主应用的展开终点、预测、磨砂和边缘柔和度。展开状态下息屏后唤醒且取得新鲜角度数据时，按设置中的统一耗时播放一次翻页；实际开合继续跟随传感器。扩展只改变壁纸背景，时钟、密码框和输入控件由 macOS 管理。
 
 扩展结构、调试入口和验证边界见 [WallpaperPrototype/README.md](WallpaperPrototype/README.md)。
 
@@ -74,7 +78,7 @@ SDKROOT="$(xcode-select -p)/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.
 
 源码仓库保存源码、构建脚本、图标及第三方声明。应用、`dist/` 安装包和验证数据均不提交到 Git。
 
-当前主应用元数据版本为 `0.8`，壁纸扩展版本为 `0.9.5`。发布前应统一核对版本与安装包内容，再创建对应标签，并在 Release 中附上包文件、变更说明、已知限制及 SHA-256 校验值。本地已有安装包不代表已包含最新源码改动。
+当前主应用元数据版本为 `0.8.1`，壁纸扩展版本为 `0.9.6`。发布前应统一核对版本与安装包内容，再创建对应标签，并在 Release 中附上包文件、变更说明、已知限制及 SHA-256 校验值。本地已有安装包不代表已包含最新源码改动。
 
 ## 来源、归属与实现范围
 

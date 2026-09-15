@@ -38,6 +38,7 @@ final class WallpaperXPCHandler: NSObject, WallpaperExtensionXPCProtocol {
     private func setAwake(_ awake: Bool) {
         let wasAwake = wakeTurn.awake
         wakeTurn.setAwake(awake, at: CACurrentMediaTime())
+        if awake != wasAwake { extensionLog("display awake=\(awake) locked=\(locked)") }
         if awake && !wasAwake {
             for key in Array(surfaces.keys) {
                 surfaces[key]?.layer.flush()
@@ -93,14 +94,16 @@ final class WallpaperXPCHandler: NSObject, WallpaperExtensionXPCProtocol {
         }
     }
     private func tick() {
+        // Notifications can be missed; keep polling even while asleep.
+        setAwake(CGDisplayIsAsleep(CGMainDisplayID()) == 0)
         guard wakeTurn.awake else { return }
-        if bridge == nil { bridge = try? AngleBridge(url: dataDirectory().appendingPathComponent("duo-state.bin"), create: false) }
+        if bridge == nil { bridge = try? AngleBridge(url: dataDirectory().appendingPathComponent(DuoWallpaperPaths.angleBridgeName), create: false) }
         let wakeTilt = wakeTurn.tilt(at: CACurrentMediaTime(), locked: locked, sample: bridge?.read())
         for key in surfaces.keys { do { try draw(key, wakeTilt: wakeTilt) } catch { extensionLog("render: \(error)") } }
     }
     private func draw(_ key: String, force: Bool = false, wakeTilt: Double? = nil) throws {
         guard var s = surfaces[key] else { return }
-        if bridge == nil { bridge = try? AngleBridge(url: dataDirectory().appendingPathComponent("duo-state.bin"), create: false) }
+        if bridge == nil { bridge = try? AngleBridge(url: dataDirectory().appendingPathComponent(DuoWallpaperPaths.angleBridgeName), create: false) }
         let now = CACurrentMediaTime()
         let sample = bridge?.read()
         // The production choice must remain a normal, visible wallpaper when

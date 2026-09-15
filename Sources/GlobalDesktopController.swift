@@ -27,6 +27,7 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
     private var distributedObservers: [NSObjectProtocol] = []
     private var deadlineTimer: Timer?
     private var maintenanceTimer: Timer?
+    private var resumeTimer: Timer?
     private var maintenanceInterval: Double?
     private var menuOpen = false
     private var overlay: NSPanel?
@@ -119,7 +120,18 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
             }
             distributedObservers.append(observer)
         }
-        if Self.sessionLocked { pauseReasons.insert("lock") }
+        if Self.sessionLocked {
+            pauseReasons.insert("lock")
+            desktopWake.event(reason: "lock", pausing: true, eligible: false, at: CACurrentMediaTime())
+        }
+        // A lost workspace wake/session notification must not leave the app
+        // suspended forever. This also detects idle display power transitions.
+        let resumeTimer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshSystemState() }
+        }
+        self.resumeTimer = resumeTimer
+        RunLoop.main.add(resumeTimer, forMode: .common)
+        refreshSystemState()
         update()
     }
 
@@ -204,7 +216,7 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
     }
     @objc private func selectWakeDuration(_ sender: NSMenuItem) {
         if let duration = sender.representedObject as? Double {
-            model.desktopWakeDuration = duration
+            model.wakeAnimationDuration = duration
             refreshStatus(force: true)
         }
     }
@@ -219,6 +231,18 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
         previewUntil = -.infinity
         // Start the eight seconds only after a fresh effect frame is ready.
         if enabled { hideEffect(); update() } else { start() }
+    }
+    func previewWakeAnimation() {
+        guard !model.permissionsPreparing, !Self.sessionLocked else { return }
+        refreshSystemState()
+        if !enabled { start() }
+        guard enabled, pauseReasons.isEmpty else { return }
+        previewPending = false; previewUntil = -.infinity
+        let now = CACurrentMediaTime()
+        desktopWake.event(reason: "display", pausing: true, eligible: true, at: now)
+        desktopWake.event(reason: "display", pausing: false, eligible: true, at: now)
+        invalidateCapture()
+        update()
     }
     @objc func calibrate() {
         guard model.savePhysicalOpenAngle() else { refreshStatus(force: true); return }
@@ -265,7 +289,7 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
         desiredFPS = 0; revision += 1
         hideEffect(invalidate: true)
         if let stream { Task { try? await stream.stopCapture() } }
-        deadlineTimer?.invalidate(); maintenanceTimer?.invalidate()
+        deadlineTimer?.invalidate(); maintenanceTimer?.invalidate(); resumeTimer?.invalidate()
         motionSubscription?.cancel()
         model.runtimeSettingsChanged = nil
         power.onChange = nil
@@ -323,9 +347,20 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
         return session["CGSSessionScreenIsLocked"] as? Bool == true ||
             session[kCGSessionOnConsoleKey as String] as? Bool == false
     }
+    private static var sessionOnConsole: Bool {
+        guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+        return session[kCGSessionOnConsoleKey as String] as? Bool == true
+    }
     private func systemEvent(reason: String, pausing: Bool) {
+        if reason == "lock", pausing, !pauseReasons.contains("display"),
+           CGDisplayIsAsleep(CGMainDisplayID()) != 0 {
+            systemEvent(reason: "display", pausing: true)
+        }
+        // A polling repair can precede the corresponding notification. Do not
+        // invalidate a fresh frame or its sensor sample twice for one change.
+        guard pauseReasons.contains(reason) != pausing else { return }
         desktopWake.event(reason: reason, pausing: pausing,
-            eligible: enabled && !Self.sessionLocked && !pauseReasons.contains("lock") && !pauseReasons.contains("session"),
+            eligible: enabled && Self.sessionOnConsole,
             at: CACurrentMediaTime())
         if pausing { pauseReasons.insert(reason) } else { pauseReasons.remove(reason) }
         freshAfter = CACurrentMediaTime()
@@ -334,7 +369,23 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
         policy.reset()
         previewPending = false; previewUntil = -.infinity
         invalidateCapture()
+        NSLog("Duo wake event: %@ paused=%d remaining=%@ animation=%d", reason, pausing,
+              pauseReasons.sorted().joined(separator: ","), desktopWake.isActive)
         update()
+    }
+    private func refreshSystemState() {
+        guard !shuttingDown,
+              let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return }
+        let onConsole = session[kCGSessionOnConsoleKey as String] as? Bool == true
+        let locked = session["CGSSessionScreenIsLocked"] as? Bool == true
+        let asleep = CGDisplayIsAsleep(CGMainDisplayID()) != 0
+        for change in SystemResumeState.changes(paused: pauseReasons, displayAsleep: asleep,
+                                                 locked: locked, onConsole: onConsole) {
+            systemEvent(reason: change.reason, pausing: change.pausing)
+        }
+        // Fresh HID samples may resume with an unchanged angle. Re-evaluate
+        // freshness even if the motion-event stream does not deliver a change.
+        if enabled && (state == .suspended || desktopWake.isActive) { update() }
     }
     private func invalidateCapture() {
         requestedGeneration += 1; revision += 1
@@ -377,7 +428,7 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
         guard !shuttingDown else { return }
         schedulerUpdates += 1
         let now = CACurrentMediaTime()
-        desktopWake.advance(at: now, allowed: enabled && !Self.sessionLocked)
+        desktopWake.advance(at: now, allowed: enabled && Self.sessionOnConsole)
         let screenFPS = overlay?.screen?.maximumFramesPerSecond ??
             NSScreen.screens.first(where: { screen in
                 guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return false }
@@ -502,7 +553,7 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
         toggleItem.title = enabled ? "停止效果" : "启用效果"
         toggleItem.isEnabled = !model.permissionsPreparing || enabled
         statusItem.button?.toolTip = "MacBook Duo · \(statusLine.title)"
-        for (duration, item) in wakeDurationItems { item.state = duration == model.desktopWakeDuration ? .on : .off }
+        for (duration, item) in wakeDurationItems { item.state = duration == model.wakeAnimationDuration ? .on : .off }
         for (mode, item) in policyItems { item.state = mode == model.performanceMode ? .on : .off }
     }
 
@@ -632,7 +683,10 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
             if firstPresentationWaits.count > 100 { firstPresentationWaits.removeFirst() }
         }
         presentationStartedAt = nil
-        desktopWake.present(at: now, duration: model.desktopWakeDuration)
+        desktopWake.present(at: now, duration: model.wakeAnimationDuration)
+        if desktopWake.isActive {
+            NSLog("Duo wake presented: duration=%.1f", model.wakeAnimationDuration)
+        }
         overlay?.alphaValue = effectOpacity(at: now)
         if previewPending { previewPending = false; previewUntil = now + 8 }
         update()
@@ -728,6 +782,9 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
             "recording": model.recorder.status().enabled, "actualAngle": snapshot.sample.angle,
             "schedulerUpdates": schedulerUpdates, "configurationUpdates": configurationUpdates,
             "screenCaptureAllowed": CGPreflightScreenCaptureAccess(), "settingsVisible": model.settingsVisible,
+            "pauseReasons": pauseReasons.sorted(), "wakeAnimationActive": desktopWake.isActive,
+            "wakeAnimationDuration": model.wakeAnimationDuration,
+            "wakeAnimationTilt": desktopWake.tilt(at: CACurrentMediaTime()) ?? 0,
             "overlayVisible": overlay?.isVisible == true && (overlay?.alphaValue ?? 0) > 0,
             "overlayOpacity": overlay?.alphaValue ?? 0,
             "continuousDrawing": renderer.map { !$0.isPaused && $0.renderingEnabled } ?? false,

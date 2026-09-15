@@ -14,7 +14,7 @@ for path,identifier,name,exe,kind in [(sys.argv[1],'studio.prototype.DuoWallpape
  pathlib.Path(path,'Contents/Info.plist').write_bytes(plistlib.dumps(d))
 pathlib.Path('WallpaperPrototype/build/extension.entitlements').write_bytes(plistlib.dumps({'com.apple.security.app-sandbox':True}))
 PY
-swiftc -swift-version 5 -parse-as-library -O -framework AppKit -framework IOKit -framework QuartzCore Sources/MotionSample.swift Sources/LidAngleSensor.swift "$BASE/Shared/AngleBridge.swift" "$BASE/Host/Main.swift" -o "$APP/Contents/MacOS/DuoWallpaperHost"
+swiftc -swift-version 5 -parse-as-library -O -framework AppKit -framework IOKit -framework QuartzCore Sources/HingeMotion.swift Sources/MotionSample.swift Sources/LidAngleSensor.swift "$BASE/Shared/AngleBridge.swift" "$BASE/Shared/WallpaperPaths.swift" "$BASE/Host/Main.swift" -o "$APP/Contents/MacOS/DuoWallpaperHost"
 # ExtensionKit must enter through Foundation bootstrap, as Xcode extensionkit-extension targets do.
 # The default Swift main exits with Unrecognized extension type before host configuration.
 swiftc -swift-version 5 -parse-as-library -O -application-extension -Xlinker -e -Xlinker _NSExtensionMain -import-objc-header "$BASE/Vendor/WallpaperExtension-Bridging-Header.h" -framework AppKit -framework ExtensionFoundation -framework AVFoundation -framework MetalKit -framework IOSurface -framework Security Sources/HingeMotion.swift Sources/GlassRenderer.swift "$BASE"/Shared/*.swift "$BASE"/Vendor/*.swift "$BASE"/Extension/*.swift -o "$EXT/Contents/MacOS/DuoWallpaper"

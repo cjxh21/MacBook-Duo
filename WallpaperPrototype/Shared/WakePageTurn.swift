@@ -7,6 +7,7 @@ struct WakePageTurn {
     private var pendingAt: Double?
     private var startedAt: Double?
     private var slept = false
+    private var duration = 0.9
 
     mutating func setAwake(_ value: Bool, at now: Double) {
         guard value != awake else { return }
@@ -31,17 +32,17 @@ struct WakePageTurn {
                 // A lid still opening should keep following the real sensor.
                 if sample.angle >= HingeMotion.clearAngle(endpoint: sample.endpoint) {
                     startedAt = now
+                    duration = WakeAnimationTiming.validDuration(sample.wakeDuration)
                 }
             }
         }
         guard let start = startedAt else { return nil }
         guard locked, let sample, sample.fresh(at: now),
               sample.angle >= HingeMotion.clearAngle(endpoint: sample.endpoint),
-              now - start < 0.9 else {
+              now - start < duration else {
             startedAt = nil
             return nil
         }
-        let progress = min(1, max(0, (now - start) / 0.9))
-        return 65 * pow(1 - progress, 3)
+        return WakeAnimationTiming.tilt(elapsed: now - start, duration: duration)
     }
 }

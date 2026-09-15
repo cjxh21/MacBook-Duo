@@ -46,10 +46,10 @@ final class AppModel: ObservableObject {
     @Published var performanceMode = PerformanceMode(rawValue: UserDefaults.standard.string(forKey: "performanceMode") ?? "") ?? .automatic {
         didSet { UserDefaults.standard.set(performanceMode.rawValue, forKey: "performanceMode"); runtimeSettingsChanged?() }
     }
-    @Published var desktopWakeDuration = DesktopWakeAnimation.validDuration(
-        UserDefaults.standard.double(forKey: "desktopWakeDuration")) {
+    @Published var wakeAnimationDuration = WakeAnimationTiming.validDuration(
+        UserDefaults.standard.double(forKey: WakeAnimationTiming.defaultsKey)) {
         didSet {
-            UserDefaults.standard.set(desktopWakeDuration, forKey: "desktopWakeDuration")
+            UserDefaults.standard.set(wakeAnimationDuration, forKey: WakeAnimationTiming.defaultsKey)
             runtimeSettingsChanged?()
         }
     }
@@ -76,6 +76,7 @@ final class AppModel: ObservableObject {
     var toggleGlobal: (() -> Void)?
     var startGlobal: (() -> Void)?
     var previewGlobal: (() -> Void)?
+    var previewWakeAnimation: (() -> Void)?
     var calibrateGlobal: (() -> Void)?
     var hideSettings: (() -> Void)?
     private var wallpaperBridgeWriter: WallpaperBridgeWriter?

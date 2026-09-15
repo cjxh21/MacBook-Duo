@@ -61,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model.pageChanged = { [weak self] page in self?.configureWindow(for: page) }
         model.startGlobal = { [weak globalController] in globalController?.start() }
         model.previewGlobal = { [weak globalController] in globalController?.preview() }
+        model.previewWakeAnimation = { [weak globalController] in globalController?.previewWakeAnimation() }
         model.calibrateGlobal = { [weak globalController] in globalController?.calibrate() }
         model.hideSettings = { [weak globalController] in globalController?.hideSetup() }
         NSApp.presentationOptions = []

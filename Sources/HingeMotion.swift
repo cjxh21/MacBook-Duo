@@ -31,3 +31,17 @@ enum HingeMotion {
         return 1 - exp(-max(deltaTime, 0) / 0.025)
     }
 }
+
+/// Shared by desktop and wallpaper so settings, validation and easing agree.
+enum WakeAnimationTiming {
+    static let durations: [Double] = [0.3, 0.6, 0.9, 1.5, 2, 3]
+    // Retain the existing preference key to preserve the user's selection.
+    static let defaultsKey = "desktopWakeDuration"
+    static func validDuration(_ value: Double) -> Double {
+        durations.contains(value) ? value : 0.9
+    }
+    static func tilt(elapsed: Double, duration: Double) -> Double {
+        let progress = min(1, max(0, elapsed / validDuration(duration)))
+        return 65 * pow(1 - progress, 3)
+    }
+}

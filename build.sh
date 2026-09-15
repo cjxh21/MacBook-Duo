@@ -30,8 +30,8 @@ info = dict(
     CFBundleDisplayName="MacBook Duo · 锁屏壁纸",
     CFBundleExecutable="DuoWallpaper",
     CFBundlePackageType="XPC!",
-    CFBundleVersion="9.5",
-    CFBundleShortVersionString="0.9.5",
+    CFBundleVersion="9.6",
+    CFBundleShortVersionString="0.9.6",
     LSMinimumSystemVersion="26.0",
     EXAppExtensionAttributes={"EXExtensionPointIdentifier": "com.apple.wallpaper"},
 )

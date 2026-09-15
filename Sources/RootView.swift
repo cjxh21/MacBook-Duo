@@ -113,17 +113,20 @@ private struct SetupView: View {
                 .disabled(model.permissionsPreparing)
             }
             SettingsCard("息屏唤醒动画") {
-                Text("启用效果后，未锁屏息屏再唤醒时自动播放翻盖动画。")
+                Text("桌面与锁屏息屏后唤醒，使用相同的翻盖动画耗时。")
                     .font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Picker("动画耗时", selection: $model.desktopWakeDuration) {
+                Picker("动画耗时", selection: $model.wakeAnimationDuration) {
                     ForEach(DesktopWakeAnimation.durations, id: \.self) { duration in
                         Text(String(format: "%.1f 秒", duration)).tag(duration)
                     }
                 }
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("desktopWakeDuration")
-                Text("时间越短，翻盖越快。设置会自动保存。")
+                Button("预览翻盖动画") { model.previewWakeAnimation?() }
+                    .disabled(model.permissionsPreparing)
+                    .help("按当前耗时播放一次，预览会启用实时桌面效果。")
+                Text("时间越短，翻盖越快。桌面动画需启用实时效果，锁屏动画需选用 Duo 壁纸。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             SettingsCard("展开位置") {

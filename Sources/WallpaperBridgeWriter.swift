@@ -14,6 +14,7 @@ final class WallpaperBridgeWriter {
     private var unlockObserver: NSObjectProtocol?
     private var locked: Bool
     private var lastSensorLease = -Double.infinity
+    private var lastSessionCheck = -Double.infinity
 
     init(worker: SensorWorker,
          defaults: UserDefaults = .standard) {
@@ -52,6 +53,14 @@ final class WallpaperBridgeWriter {
 
     private func publish() {
         let now = CACurrentMediaTime()
+        if now - lastSessionCheck >= 0.25 {
+            lastSessionCheck = now
+            let currentLocked = Self.sessionIsLocked()
+            if currentLocked != locked {
+                locked = currentLocked
+                lastSensorLease = -.infinity
+            }
+        }
         if locked, now - lastSensorLease >= 0.25 {
             // GlobalDesktopController deliberately suspends its sensor while
             // the session is locked. The wallpaper still needs fresh hinge
@@ -70,16 +79,16 @@ final class WallpaperBridgeWriter {
         let awake = CGDisplayIsAsleep(CGMainDisplayID()) == 0
         _ = bridge?.write(WallpaperAngle(time: snapshot.sample.time, angle: snapshot.sample.angle,
             predicted: snapshot.predicted(at: now, enabled: predictionEnabled), endpoint: endpoint,
-            frost: frost, softness: softness, valid: snapshot.sample.valid, awake: awake))
+            frost: frost, softness: softness, valid: snapshot.sample.valid, awake: awake,
+            wakeDuration: WakeAnimationTiming.validDuration(defaults.double(forKey: WakeAnimationTiming.defaultsKey))))
     }
 
     private func setLocked(_ value: Bool) {
+        guard value != locked else { return }
         locked = value
-        if value {
-            lastSensorLease = -.infinity
-            worker.setRate(30)
-            publish()
-        }
+        lastSessionCheck = CACurrentMediaTime()
+        lastSensorLease = -.infinity
+        publish()
     }
 
     private static func sessionIsLocked() -> Bool {

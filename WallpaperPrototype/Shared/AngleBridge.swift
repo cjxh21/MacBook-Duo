@@ -10,6 +10,7 @@ struct WallpaperAngle {
     var softness: Double
     var valid: Bool
     var awake: Bool
+    var wakeDuration: Double = 0.9
     func fresh(at now: Double) -> Bool {
         valid && awake && time.isFinite && now >= time && now - time < 0.5 &&
         angle.isFinite && (0...180).contains(angle) && predicted.isFinite &&
@@ -19,9 +20,9 @@ struct WallpaperAngle {
 }
 
 // One fixed-size memory-mapped page, not a stream of files. Advisory locks are
-// held only around a 72-byte copy. A dead process cannot leave a held flock.
+// held only around an 80-byte copy. A dead process cannot leave a held flock.
 final class AngleBridge {
-    static let byteCount = 72
+    static let byteCount = 80
     private let fd: Int32
     private let memory: UnsafeMutableRawPointer
     init(url: URL, create: Bool) throws {
@@ -43,15 +44,15 @@ final class AngleBridge {
     @discardableResult func write(_ s: WallpaperAngle) -> Bool {
         guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { return false }
         defer { flock(fd, LOCK_UN) }
-        let fields = [1.0, s.time, s.angle, s.predicted, s.endpoint, s.frost, s.softness, s.valid ? 1.0 : 0.0, s.awake ? 1.0 : 0.0]
+        let fields = [2.0, s.time, s.angle, s.predicted, s.endpoint, s.frost, s.softness, s.valid ? 1.0 : 0.0, s.awake ? 1.0 : 0.0, WakeAnimationTiming.validDuration(s.wakeDuration)]
         fields.withUnsafeBytes { memory.copyMemory(from: $0.baseAddress!, byteCount: Self.byteCount) }
         return true
     }
     func read() -> WallpaperAngle? {
         guard flock(fd, LOCK_SH | LOCK_NB) == 0 else { return nil }
         defer { flock(fd, LOCK_UN) }
-        let f = Array(UnsafeBufferPointer(start: memory.assumingMemoryBound(to: Double.self), count: 9))
-        guard f[0] == 1 else { return nil }
-        return WallpaperAngle(time: f[1], angle: f[2], predicted: f[3], endpoint: f[4], frost: f[5], softness: f[6], valid: f[7] == 1, awake: f[8] == 1)
+        let f = Array(UnsafeBufferPointer(start: memory.assumingMemoryBound(to: Double.self), count: 10))
+        guard f[0] == 2 else { return nil }
+        return WallpaperAngle(time: f[1], angle: f[2], predicted: f[3], endpoint: f[4], frost: f[5], softness: f[6], valid: f[7] == 1, awake: f[8] == 1, wakeDuration: WakeAnimationTiming.validDuration(f[9]))
     }
 }

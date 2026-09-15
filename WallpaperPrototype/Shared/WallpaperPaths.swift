@@ -7,7 +7,7 @@ enum DuoWallpaperPaths {
     static let extensionBundleID = "studio.prototype.DuoWallpaper.extension"
     static let customWallpaperName = "duo-wallpaper.png"
     static let thumbnailName = "duo-thumbnail.png"
-    static let angleBridgeName = "duo-state.bin"
+    static let angleBridgeName = "duo-state-v2.bin"
 
     static var documentsDirectory: URL {
         if Bundle.main.bundleIdentifier == extensionBundleID,

@@ -19,6 +19,6 @@ swiftc -parse-as-library "$PROJECT_DIR/Sources/HingeMotion.swift" \
   "$PROJECT_DIR/Sources/MotionSample.swift" "$PROJECT_DIR/Sources/RuntimePolicy.swift" \
   "$PROJECT_DIR/Tests/RuntimePolicyTests.swift" -o "$TEST_DIR/policy"
 "$TEST_DIR/policy"
-swiftc -parse-as-library "$PROJECT_DIR/Sources/DesktopWakeAnimation.swift" \
+swiftc -parse-as-library "$PROJECT_DIR/Sources/HingeMotion.swift" "$PROJECT_DIR/Sources/DesktopWakeAnimation.swift" "$PROJECT_DIR/Sources/SystemResumeState.swift" \
   "$PROJECT_DIR/Tests/DesktopWakeAnimationTests.swift" -o "$TEST_DIR/desktop-wake"
 "$TEST_DIR/desktop-wake"
