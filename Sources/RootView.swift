@@ -112,6 +112,20 @@ private struct SetupView: View {
                 .controlSize(.large)
                 .disabled(model.permissionsPreparing)
             }
+            SettingsCard("息屏唤醒动画") {
+                Text("启用效果后，未锁屏息屏再唤醒时自动播放翻盖动画。")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Picker("动画耗时", selection: $model.desktopWakeDuration) {
+                    ForEach(DesktopWakeAnimation.durations, id: \.self) { duration in
+                        Text(String(format: "%.1f 秒", duration)).tag(duration)
+                    }
+                }
+                .pickerStyle(.menu)
+                .accessibilityIdentifier("desktopWakeDuration")
+                Text("时间越短，翻盖越快。设置会自动保存。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             SettingsCard("展开位置") {
                 HStack(alignment: .firstTextBaseline) {
                     angleValue("当前角度", value: sensor.isAvailable ? "\(Int(sensor.angle.rounded()))°" : "—")
