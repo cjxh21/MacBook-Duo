@@ -1,0 +1,35 @@
+# macOS metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+
+# Swift/Xcode local state
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Generated application, extension build output and release packages
+MacBook Duo.app/
+WallpaperPrototype/build/
+dist/
+*.dmg
+*.pkg
+
+# Local runtime validation output
+Validation/
+*.log
+
+# Local history and planning notes (keep out of the initial public snapshot)
+GLOBAL-README.md
+使用与更新.md
+后续数据优化计划.md
+
+# Local Python tooling and credentials
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+!.env.example
