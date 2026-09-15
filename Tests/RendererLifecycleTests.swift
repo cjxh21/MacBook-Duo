@@ -19,7 +19,15 @@ struct RendererLifecycleTests {
         CVPixelBufferLockBaseAddress(buffer!,[])
         memset(CVPixelBufferGetBaseAddress(buffer!),220,CVPixelBufferGetDataSize(buffer!))
         CVPixelBufferUnlockBaseAddress(buffer!,[])
-        func run(_ seconds: Double) { let deadline=Date().addingTimeInterval(seconds);while Date()<deadline { RunLoop.main.run(until:Date().addingTimeInterval(0.005)) } }
+        // Exercise the renderer's scheduling flags even when the physical
+        // display is asleep and its display link does not deliver callbacks.
+        func run(_ seconds: Double) {
+            let deadline = Date().addingTimeInterval(seconds)
+            while Date() < deadline {
+                if view.renderingEnabled && !view.isPaused { view.draw() }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            }
+        }
         view.receive(buffer!); run(0.2)
         precondition(view.frameCount == 0 && view.pyramidBuildCount == 0, "hidden renderer must do no GPU work")
         view.onReady = { window.alphaValue = 1 }
@@ -40,7 +48,27 @@ struct RendererLifecycleTests {
         view.invalidateContent(); precondition(!view.readyForDisplay)
         view.receive(buffer!); view.renderingEnabled = true; view.setLiveAngle(20); run(0.7)
         precondition(view.readyForDisplay, "resume must use a fresh GPU-complete frame")
+        view.invalidateContent()
+        var wakeAngle = 90.0
+        view.wakeAngleProvider = { wakeAngle }
+        view.movingProvider = { true }
+        let priorPyramids = view.pyramidBuildCount
+        let cover = NSWindow(contentRect: window.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        cover.isReleasedWhenClosed = false; cover.backgroundColor = .black
+        cover.level = NSWindow.Level(rawValue: window.level.rawValue + 1)
+        cover.orderFrontRegardless()
+        var wakeReady = false
+        view.onReady = { wakeReady = true; window.alphaValue = 1; cover.orderOut(nil) }
+        window.alphaValue = 0
+        view.receive(buffer!); view.renderingEnabled = true; view.draw(); run(0.4)
+        precondition(wakeReady && !cover.isVisible, "The folded first frame must become ready behind the black cover")
+        precondition(view.pyramidBuildCount == priorPyramids, "Wake frames must skip the blur pyramid")
+        wakeAngle = 45; run(0.15)
+        wakeAngle = 0; run(0.15)
+        view.wakeAngleProvider = nil; view.movingProvider = nil; view.continuousRendering = false
+        view.setLiveAngle(0); view.draw(); run(0.2)
+        precondition(view.pyramidBuildCount == priorPyramids + 1, "Returning to hinge rendering prepares the latest source once")
         window.orderOut(nil)
-        print("PASS: hidden zero-render, first-frame readiness, static pause, angle-only blur reuse, latest-frame coalescing, fresh resume")
+        print("PASS: hidden zero-render, first-frame readiness, static pause, angle-only blur reuse, fresh resume, covered wake handoff and separate wake rendering")
     }
 }

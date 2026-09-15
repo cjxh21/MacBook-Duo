@@ -28,13 +28,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ProcessInfo.processInfo.disableSuddenTermination()
         let model = AppModel()
         self.model = model
-        model.globalStatus = "正在检查首次启动的屏幕录制权限…"
-        Task { @MainActor in
-            let message = await ScreenCapturePermissionPreparation.prepare()
-            model.globalStatus = message ?? "实时桌面模式需要屏幕录制权限"
-            model.globalNotice = message ?? (CGPreflightScreenCaptureAccess() ? "" : "启用效果需要屏幕录制权限。")
-            model.permissionsPreparing = false
-        }
+        let permissionNotice = ScreenCapturePermissionPreparation.prepare()
+        model.globalStatus = permissionNotice ?? "屏幕录制权限已就绪"
+        model.globalNotice = permissionNotice ?? ""
+        model.permissionsPreparing = false
         let window = DesktopWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 620),
                                    styleMask: [.titled, .closable, .miniaturizable, .resizable],
                                    backing: .buffered, defer: false)

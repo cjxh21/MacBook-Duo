@@ -13,11 +13,11 @@ import CoreVideo
         precondition(wake.tilt(at: 2, locked: true, sample: opened(2)) == nil)
         wake.setAwake(true, at: 3)
         precondition(wake.tilt(at: 3, locked: false, sample: opened(3)) == nil)
-        precondition(wake.tilt(at: 3.1, locked: true, sample: opened(1)) == nil)
-        precondition(wake.tilt(at: 3.2, locked: true, sample: opened(3.2)) == 65)
+        precondition(wake.tilt(at: 3.1, locked: true, sample: opened(1)) == 90)
+        precondition(wake.tilt(at: 3.2, locked: true, sample: opened(3.2)) == 90)
         wake.setAwake(true, at: 3.4) // Duplicate notifications must not restart.
         let middle = wake.tilt(at: 3.65, locked: true, sample: opened(3.65))!
-        precondition(abs(middle - 8.125) < 0.001)
+        precondition(abs(middle - 45) < 0.001)
         precondition(wake.tilt(at: 4.2, locked: true, sample: opened(4.2)) == nil)
         wake.setAwake(false, at: 5)
         wake.setAwake(true, at: 6)
@@ -28,7 +28,7 @@ import CoreVideo
         precondition(wake.tilt(at: 10.1, locked: true, sample: opened(10.1)) == nil)
         wake.setAwake(false, at: 11)
         wake.setAwake(true, at: 12)
-        precondition(wake.tilt(at: 12, locked: true, sample: opened(12)) == 65)
+        precondition(wake.tilt(at: 12, locked: true, sample: opened(12)) == 90)
         precondition(wake.tilt(at: 12.1, locked: false, sample: opened(12.1)) == nil)
         precondition(wake.tilt(at: 12.2, locked: true, sample: opened(12.2)) == nil)
         print("PASS: wake page turn, duplicate wake, stale data, moving lid, timeout, unlock cancellation")
@@ -52,16 +52,57 @@ import CoreVideo
             var cycle = WakePageTurn()
             cycle.setAwake(false, at: 99)
             cycle.setAwake(true, at: 100)
-            precondition(cycle.tilt(at: 100, locked: true, sample: reader.read()) == 65)
+            precondition(cycle.tilt(at: 100, locked: true, sample: reader.read()) == 90)
             configured.time = 100 + duration / 2
             precondition(writer.write(configured))
             let middle = cycle.tilt(at: configured.time, locked: true, sample: reader.read())!
-            precondition(abs(middle - 8.125) < 0.001, "Both renderers must share the same duration and curve")
+            precondition(abs(middle - 45) < 0.001, "Both renderers must share the same duration and curve")
             configured.time = 100 + duration + 0.001
             precondition(writer.write(configured))
             precondition(cycle.tilt(at: configured.time, locked: true, sample: reader.read()) == nil)
         }
         print("PASS: all shared wake durations survive bridge transport and control lock-screen timing")
+        func image(_ buffer: CVPixelBuffer) -> CGImage {
+            CVPixelBufferLockBaseAddress(buffer, .readOnly)
+            defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+            let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
+            let stride = CVPixelBufferGetBytesPerRow(buffer)
+            let data = Data(bytes: CVPixelBufferGetBaseAddress(buffer)!, count: stride * height)
+            return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                bytesPerRow: stride, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue).union(.byteOrder32Little),
+                provider: CGDataProvider(data: data as CFData)!, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+        }
+        let opening = try WallpaperFrameRenderer(width: 960, height: 600)
+        var previousVisible = 0
+        var finalOpening: Data?
+        for angle in [90.0, 75, 55, 35, 15, 0] {
+            let frame = try opening.render(tilt: 0, opacity: 1, wakeAngle: angle)
+            let cg = image(frame)
+            let data = cg.dataProvider!.data! as Data
+            var visible = 0, firstVisibleRow = opening.height
+            for y in 0..<opening.height {
+                for x in 0..<opening.width {
+                    let offset = y * cg.bytesPerRow + x * 4
+                    if data[offset] != 0 || data[offset + 1] != 0 || data[offset + 2] != 0 {
+                        visible += 1; firstVisibleRow = min(firstVisibleRow, y)
+                    }
+                }
+            }
+            if angle == 90 { precondition(visible == 0, "The closed wake frame must be solid black") }
+            if angle == 55 {
+                precondition(firstVisibleRow > opening.height / 2, "The image must rise from the bottom hinge")
+            }
+            precondition(visible >= previousVisible, "Opening must reveal the image monotonically")
+            previousVisible = visible
+            try NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:])!
+                .write(to: folder.appendingPathComponent("wake-\(Int(angle)).png"))
+            if angle == 0 { finalOpening = data }
+        }
+        precondition(opening.pyramidBuilds == 0, "Wake rendering must not build unused blur levels")
+        let normal = image(try opening.render(tilt: 0, opacity: 1))
+        precondition(finalOpening == normal.dataProvider!.data! as Data, "The final wake frame must exactly match the normal image")
+        print("PASS: black first frame, bottom-anchored perspective opening, monotonic reveal, exact final handoff, no wake blur work")
         let renderer = try WallpaperFrameRenderer(width: 1200, height: 780)
         for angle in [115.0, 100, 65] {
             let buffer = try renderer.render(tilt: HingeMotion.tilt(angle: angle, endpoint: 115),

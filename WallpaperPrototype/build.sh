@@ -19,7 +19,5 @@ swiftc -swift-version 5 -parse-as-library -O -framework AppKit -framework IOKit 
 # The default Swift main exits with Unrecognized extension type before host configuration.
 swiftc -swift-version 5 -parse-as-library -O -application-extension -Xlinker -e -Xlinker _NSExtensionMain -import-objc-header "$BASE/Vendor/WallpaperExtension-Bridging-Header.h" -framework AppKit -framework ExtensionFoundation -framework AVFoundation -framework MetalKit -framework IOSurface -framework Security Sources/HingeMotion.swift Sources/GlassRenderer.swift "$BASE"/Shared/*.swift "$BASE"/Vendor/*.swift "$BASE"/Extension/*.swift -o "$EXT/Contents/MacOS/DuoWallpaper"
 cp "$BASE/Vendor/LICENSE-Phosphene" "$EXT/Contents/Resources/"
-codesign --force --sign - --entitlements "$BASE/build/extension.entitlements" "$EXT"
-codesign --force --sign - "$APP"
-codesign --verify --deep --strict "$APP"
+zsh Tools/sign-app.sh "$APP" "$EXT" "$BASE/build/extension.entitlements"
 echo "Built $APP (not installed or selected)"

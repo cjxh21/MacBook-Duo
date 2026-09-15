@@ -104,6 +104,7 @@ final class GaussianPyramid {
 final class GlassMetalView: MTKView, MTKViewDelegate {
     private var queue: MTLCommandQueue?
     private var pipeline: MTLRenderPipelineState?
+    private var wakePipeline: MTLRenderPipelineState?
     private var pyramid: GaussianPyramid?
     private var texture: MTLTexture?
     private var sourceImage: NSImage?
@@ -123,6 +124,7 @@ final class GlassMetalView: MTKView, MTKViewDelegate {
     private var sourceArrival: Double?
     var angleProvider: (() -> Double)?
     var sensorTimeProvider: (() -> Double)?
+    var wakeAngleProvider: (() -> Double?)?
     var movingProvider: (() -> Bool)?
     var opacityProvider: (() -> Double)?
     var onFrame: ((RenderTiming) -> Void)?
@@ -136,7 +138,7 @@ final class GlassMetalView: MTKView, MTKViewDelegate {
         }
     }
     var continuousRendering = false
-    var isOperational: Bool { pipeline != nil && pyramid != nil }
+    var isOperational: Bool { pipeline != nil && wakePipeline != nil && pyramid != nil }
     var readyForDisplay: Bool { fresh && pipeline != nil }
     var settled: Bool { abs(displayed - target) < 0.03 }
     private(set) var frameCount = 0
@@ -181,6 +183,8 @@ final class GlassMetalView: MTKView, MTKViewDelegate {
             descriptor.fragmentFunction = library.makeFunction(name: "glassMain")
             descriptor.colorAttachments[0].pixelFormat = colorPixelFormat
             pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+            descriptor.fragmentFunction = library.makeFunction(name: "wakeMain")
+            wakePipeline = try device.makeRenderPipelineState(descriptor: descriptor)
             pyramid = try GaussianPyramid(device: device, library: library)
         } catch { NSLog("MacBook Duo Metal: %@", String(describing: error)) }
         delegate = self
@@ -199,7 +203,8 @@ final class GlassMetalView: MTKView, MTKViewDelegate {
     }
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) { requestFrame() }
     func draw(in view: MTKView) {
-        guard renderingEnabled, inFlight < 2, let device, let queue, let pipeline, let pyramid else { return }
+        guard renderingEnabled, inFlight < 2, let device, let queue, let pipeline, let wakePipeline, let pyramid else { return }
+        let wakeAngle = wakeAngleProvider?()
         if let angleProvider { target = Float(angleProvider()) }
         if let movingProvider { continuousRendering = movingProvider() }
         let encodeStart = CACurrentMediaTime()
@@ -227,20 +232,23 @@ final class GlassMetalView: MTKView, MTKViewDelegate {
             }
         }
         guard let texture else { isPaused = true; return }
-        if imageDirty {
+        if imageDirty && wakeAngle == nil {
             guard pyramid.encode(source: texture, command: command) else { isPaused = true; onFailure?(); return }
             pyramidBuildCount += 1; imageDirty = false
         }
-        guard pyramid.levels.count == 8, let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return }
+        guard wakeAngle != nil || pyramid.levels.count == 8,
+              let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return }
         let now = CACurrentMediaTime()
-        if !fresh || target == 0 { displayed = target }
+        if let wakeAngle { displayed = Float(wakeAngle) }
+        else if !fresh || target == 0 { displayed = target }
         else { displayed += (target - displayed) * Float(HingeMotion.blend(deltaTime: now - lastTime)) }
-        if abs(target - displayed) < 0.001 { displayed = target }
+        if wakeAngle == nil && abs(target - displayed) < 0.001 { displayed = target }
         lastTime = now
         var p = [Float(drawableSize.width), Float(drawableSize.height), displayed, frost, eyeDistance,
                  Float(texture.width) / Float(texture.height), softness, Float(opacityProvider?() ?? 1)]
-        encoder.setRenderPipelineState(pipeline)
-        for (i, level) in pyramid.levels.enumerated() { encoder.setFragmentTexture(level, index: i) }
+        encoder.setRenderPipelineState(wakeAngle == nil ? pipeline : wakePipeline)
+        if wakeAngle != nil { encoder.setFragmentTexture(texture, index: 0) }
+        else { for (i, level) in pyramid.levels.enumerated() { encoder.setFragmentTexture(level, index: i) } }
         encoder.setFragmentBytes(&p, length: p.count * MemoryLayout<Float>.size, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3); encoder.endEncoding()
         command.present(drawable)
@@ -306,6 +314,32 @@ final class GlassMetalView: MTKView, MTKViewDelegate {
     vertex VertexOut vertexMain(uint id [[vertex_id]]) {
         float2 uv = float2((id << 1) & 2, id & 2);
         return {float4(uv.x * 2 - 1, 1 - uv.y * 2, 0, 1), uv};
+    }
+    // A rigid image plane opens around the bottom edge. This is the inverse
+    // perspective projection of that plane, with black outside its silhouette.
+    // Physical hinge motion continues to use glassMain below.
+    fragment float4 wakeMain(VertexOut in [[stage_in]], texture2d<float> source [[texture(0)]], constant Params& p [[buffer(0)]]) {
+        constexpr sampler s(filter::linear, address::clamp_to_edge);
+        float screenAspect = p.size.x / p.size.y;
+        float2 fit = screenAspect > p.imageAspect ? float2(1, screenAspect / p.imageAspect) : float2(p.imageAspect / screenAspect, 1);
+        if (p.angle <= 0.00001) return float4(source.sample(s, (in.uv - 0.5) / fit + 0.5).rgb, 1);
+        float angle = clamp(p.angle, 0.0f, 90.0f) * M_PI_F / 180;
+        float c = cos(angle), sn = sin(angle), eye = max(1.1f, p.eye);
+        float fromHinge = 1 - in.uv.y;
+        float projectedHeight = eye * c / (eye + sn);
+        if (fromHinge > projectedHeight + 1 / p.size.y) return float4(0, 0, 0, 1);
+        float denominator = eye * c - fromHinge * sn;
+        if (c < 0.0001 || denominator <= 0.0001) return float4(0, 0, 0, 1);
+        float height = fromHinge * eye / denominator;
+        float scale = eye / (eye + height * sn);
+        float2 plane = float2(0.5 + (in.uv.x - 0.5) / scale, 1 - height);
+        float2 edge = float2(0.5 * scale - abs(in.uv.x - 0.5), projectedHeight - fromHinge);
+        float2 aa = 1 / p.size;
+        float2 coverageXY = smoothstep(-aa * 0.5, aa * 0.5, edge);
+        float coverage = coverageXY.x * coverageXY.y;
+        float3 color = source.sample(s, (plane - 0.5) / fit + 0.5).rgb;
+        color *= 1 - 0.12 * sn;
+        return float4(color * coverage, 1);
     }
     fragment float4 glassMain(VertexOut in [[stage_in]], array<texture2d<float>, 8> tex [[texture(0)]], constant Params& p [[buffer(0)]]) {
         constexpr sampler s(filter::linear, address::clamp_to_edge);

@@ -30,8 +30,8 @@ info = dict(
     CFBundleDisplayName="MacBook Duo · 锁屏壁纸",
     CFBundleExecutable="DuoWallpaper",
     CFBundlePackageType="XPC!",
-    CFBundleVersion="9.6",
-    CFBundleShortVersionString="0.9.6",
+    CFBundleVersion="9.7",
+    CFBundleShortVersionString="0.9.7",
     LSMinimumSystemVersion="26.0",
     EXAppExtensionAttributes={"EXExtensionPointIdentifier": "com.apple.wallpaper"},
 )
@@ -92,8 +92,5 @@ print(f"Verified deployment target: macOS {sys.argv[3]}")
 PYVERIFY
 
 cp "$PROJECT_DIR/WallpaperPrototype/Vendor/LICENSE-Phosphene" "$EXT_DIR/Contents/Resources/"
-codesign --force --sign - --entitlements "$PROJECT_DIR/WallpaperPrototype/build/extension.entitlements" "$EXT_DIR"
-
-codesign --force --deep --sign - "$APP_DIR"
-codesign --verify --deep --strict "$APP_DIR"
+zsh "$PROJECT_DIR/Tools/sign-app.sh" "$APP_DIR" "$EXT_DIR" "$PROJECT_DIR/WallpaperPrototype/build/extension.entitlements"
 echo "Built: $APP_DIR"

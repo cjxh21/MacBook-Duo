@@ -9,6 +9,7 @@ final class WallpaperXPCHandler: NSObject, WallpaperExtensionXPCProtocol {
         let diagnostic: Bool
         var lastTilt = -1.0
         var lastOpacity = -1.0
+        var lastWasWake = false
         var smoothTilt = 0.0
         var smoothAt = 0.0
         var firstFrame = true
@@ -24,6 +25,8 @@ final class WallpaperXPCHandler: NSObject, WallpaperExtensionXPCProtocol {
     private let start = CACurrentMediaTime()
     override init() {
         super.init()
+        refreshLockState()
+        wakeTurn.setAwake(CGDisplayIsAsleep(CGMainDisplayID()) == 0, at: CACurrentMediaTime())
         let center = NSWorkspace.shared.notificationCenter
         for (name, awake) in [(NSWorkspace.screensDidSleepNotification, false),
                               (NSWorkspace.screensDidWakeNotification, true)] {
@@ -35,14 +38,33 @@ final class WallpaperXPCHandler: NSObject, WallpaperExtensionXPCProtocol {
     deinit {
         for observer in observers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
     }
+    private func refreshLockState() {
+        // WallpaperAgent can deliver presentationMode after the first wake
+        // frame. Use the current session state when it is available.
+        guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return }
+        locked = session["CGSSessionScreenIsLocked"] as? Bool == true ||
+            session[kCGSessionOnConsoleKey as String] as? Bool == false
+    }
     private func setAwake(_ awake: Bool) {
         let wasAwake = wakeTurn.awake
         wakeTurn.setAwake(awake, at: CACurrentMediaTime())
-        if awake != wasAwake { extensionLog("display awake=\(awake) locked=\(locked)") }
+        if awake != wasAwake {
+            refreshLockState()
+            extensionLog("display awake=\(awake) locked=\(locked)")
+        }
         if awake && !wasAwake {
             for key in Array(surfaces.keys) {
                 surfaces[key]?.layer.flush()
                 surfaces[key]?.firstFrame = true
+            }
+        }
+        if !awake && wasAwake {
+            // Replace the last normal frame while the display is dark.
+            for key in Array(surfaces.keys) where surfaces[key]?.diagnostic == false {
+                surfaces[key]?.layer.flush()
+                surfaces[key]?.firstFrame = true
+                do { try draw(key, force: true, wakeTilt: WakeAnimationTiming.closedAngle) }
+                catch { extensionLog("prepare wake: \(error)") }
             }
         }
     }
@@ -80,7 +102,10 @@ final class WallpaperXPCHandler: NSObject, WallpaperExtensionXPCProtocol {
                 }
                 context.layer = layer
                 self.surfaces[k] = Surface(context: context, renderer: renderer, layer: layer, diagnostic: diagnostic, sourceDate: custom.1)
-                try self.draw(k, force: true)
+                self.refreshLockState()
+                let firstWakeTilt = self.wakeTurn.awake ?
+                    self.wakeTurn.tilt(at: CACurrentMediaTime(), locked: self.locked, sample: self.bridge?.read()) : WakeAnimationTiming.closedAngle
+                try self.draw(k, force: true, wakeTilt: firstWakeTilt)
                 CATransaction.flush()
                 reply(createRemoteContextXPC(contextId: context.contextId), nil)
                 if self.timer == nil {
@@ -120,7 +145,8 @@ final class WallpaperXPCHandler: NSObject, WallpaperExtensionXPCProtocol {
             frost = sample.frost; softness = sample.softness
             if HingeMotion.remaining(angle: sample.angle, endpoint: sample.endpoint) == 0 { targetTilt = 0 }
         }
-        if !s.diagnostic, locked, let wakeTilt {
+        let isWake = !s.diagnostic && wakeTilt != nil && (locked || !wakeTurn.awake)
+        if isWake, let wakeTilt {
             targetTilt = wakeTilt
             targetOpacity = 1
         }
@@ -129,7 +155,7 @@ final class WallpaperXPCHandler: NSObject, WallpaperExtensionXPCProtocol {
         // existing 25 ms response curve.
         let dt = s.smoothAt > 0 ? min(0.2, max(0, now - s.smoothAt)) : (1.0 / 30.0)
         let blend = force ? 1.0 : HingeMotion.blend(deltaTime: dt)
-        let tilt = force || targetTilt == 0 ? targetTilt : s.smoothTilt + (targetTilt - s.smoothTilt) * blend
+        let tilt = force || isWake || targetTilt == 0 ? targetTilt : s.smoothTilt + (targetTilt - s.smoothTilt) * blend
         // The production overlay applies effect opacity directly from the
         // current sample; only the angle itself is eased.
         let opacity = targetOpacity
@@ -144,12 +170,13 @@ final class WallpaperXPCHandler: NSObject, WallpaperExtensionXPCProtocol {
                 sourceChanged = true
             }
         }
-        guard force || s.firstFrame || sourceChanged || abs(s.lastTilt - tilt) > 0.001 || abs(s.lastOpacity - opacity) > 0.001 else {
+        guard force || s.firstFrame || sourceChanged || s.lastWasWake != isWake || abs(s.lastTilt - tilt) > 0.001 || abs(s.lastOpacity - opacity) > 0.001 else {
             surfaces[key] = s
             return
         }
         surfaces[key] = s
-        let buffer = try s.renderer.render(tilt: tilt, opacity: opacity, frost: frost, softness: softness)
+        let buffer = try s.renderer.render(tilt: tilt, opacity: opacity, frost: frost, softness: softness,
+                                           wakeAngle: isWake ? tilt : nil)
         if s.format == nil {
             var created: CMVideoFormatDescription?
             guard CMVideoFormatDescriptionCreateForImageBuffer(allocator: nil, imageBuffer: buffer, formatDescriptionOut: &created) == noErr,
@@ -174,14 +201,15 @@ final class WallpaperXPCHandler: NSObject, WallpaperExtensionXPCProtocol {
         }
         if s.layer.status == .failed { s.layer.flush() }
         s.layer.enqueue(frame)
-        s.lastTilt = tilt; s.lastOpacity = opacity; s.firstFrame = false; surfaces[key] = s
+        s.lastTilt = tilt; s.lastOpacity = opacity; s.lastWasWake = isWake; s.firstFrame = false; surfaces[key] = s
     }
     func update(withId id: Any?, request: Any?, reply: @escaping (Error?) -> Void) {
         extensionLog("update: begin id=\(String(describing: id))")
         DispatchQueue.main.async {
             if let request {
                 if let mode = property("presentationMode", in: request) { self.locked = enumName(mode) == "locked" }
-                if let state = property("activityState", in: request) { self.setAwake(enumName(state) != "suspended") }
+                // Activity suspension also means a wallpaper is merely hidden.
+                // Only actual display power changes arm a wake turn.
             }
             self.tick(); extensionLog("update: complete"); reply(nil)
         }

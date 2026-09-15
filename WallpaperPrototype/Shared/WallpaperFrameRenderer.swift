@@ -8,6 +8,7 @@ final class WallpaperFrameRenderer {
     let device: MTLDevice
     let queue: MTLCommandQueue
     let pipeline: MTLRenderPipelineState
+    let wakePipeline: MTLRenderPipelineState
     let pyramid: GaussianPyramid
     private(set) var source: MTLTexture
     let width: Int
@@ -29,6 +30,8 @@ final class WallpaperFrameRenderer {
         descriptor.fragmentFunction = library.makeFunction(name: "glassMain")
         descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
         pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        descriptor.fragmentFunction = library.makeFunction(name: "wakeMain")
+        wakePipeline = try device.makeRenderPipelineState(descriptor: descriptor)
         pyramid = try GaussianPyramid(device: device, library: library)
         source = try MTKTextureLoader(device: device).newTexture(cgImage: sourceImage ?? DuoBackdrop.image(), options: [.SRGB: false])
         guard CVMetalTextureCacheCreate(nil, nil, device, nil, &cache) == kCVReturnSuccess else { throw Self.failure("Texture cache") }
@@ -45,15 +48,16 @@ final class WallpaperFrameRenderer {
         source = try MTKTextureLoader(device: device).newTexture(cgImage: image, options: [.SRGB: false])
         pyramidReady = false
     }
-    func render(tilt: Double, opacity: Double, frost: Double = 0.09, softness: Double = 1) throws -> CVPixelBuffer {
-        guard tilt.isFinite, opacity.isFinite, frost.isFinite, softness.isFinite, let pool, let cache else { throw Self.failure("Invalid parameters") }
+    func render(tilt: Double, opacity: Double, frost: Double = 0.09, softness: Double = 1, wakeAngle: Double? = nil) throws -> CVPixelBuffer {
+        guard tilt.isFinite, opacity.isFinite, frost.isFinite, softness.isFinite,
+              wakeAngle?.isFinite != false, let pool, let cache else { throw Self.failure("Invalid parameters") }
         var buffer: CVPixelBuffer?
         guard CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(nil, pool,
             [kCVPixelBufferPoolAllocationThresholdKey: 4] as CFDictionary, &buffer) == kCVReturnSuccess, let buffer else { throw Self.failure("Pixel pool busy") }
         var wrapper: CVMetalTexture?
         guard CVMetalTextureCacheCreateTextureFromImage(nil, cache, buffer, nil, .bgra8Unorm, width, height, 0, &wrapper) == kCVReturnSuccess,
               let wrapper, let texture = CVMetalTextureGetTexture(wrapper), let command = queue.makeCommandBuffer() else { throw Self.failure("IOSurface texture") }
-        if !pyramidReady {
+        if !pyramidReady && wakeAngle == nil {
             guard pyramid.encode(source: source, command: command) else { throw Self.failure("Gaussian pyramid") }
         }
         let pass = MTLRenderPassDescriptor()
@@ -61,16 +65,17 @@ final class WallpaperFrameRenderer {
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .store
         guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw Self.failure("Render encoder") }
-        encoder.setRenderPipelineState(pipeline)
-        for (index, level) in pyramid.levels.enumerated() { encoder.setFragmentTexture(level, index: index) }
-        var params: [Float] = [Float(width), Float(height), Float(tilt), Float(frost), 2.4,
+        encoder.setRenderPipelineState(wakeAngle == nil ? pipeline : wakePipeline)
+        if wakeAngle != nil { encoder.setFragmentTexture(source, index: 0) }
+        else { for (index, level) in pyramid.levels.enumerated() { encoder.setFragmentTexture(level, index: index) } }
+        var params: [Float] = [Float(width), Float(height), Float(wakeAngle ?? tilt), Float(frost), 2.4,
                               Float(source.width) / Float(source.height), Float(softness), Float(opacity)]
         encoder.setFragmentBytes(&params, length: params.count * 4, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         encoder.endEncoding(); command.commit(); command.waitUntilCompleted()
         withExtendedLifetime(wrapper) {}
         guard command.status == .completed else { throw Self.failure(command.error?.localizedDescription ?? "GPU failure") }
-        if !pyramidReady { pyramidReady = true; pyramidBuilds += 1 }
+        if !pyramidReady && wakeAngle == nil { pyramidReady = true; pyramidBuilds += 1 }
         frameCount += 1; lastBuffer = buffer
         return buffer
     }

@@ -12,6 +12,7 @@ struct RuntimeInput {
     var onAC: Bool
     var lowPower: Bool
     var preview: Bool = false
+    var wakeAnimation: Bool = false
     var screenFPS: Int = 60
     var freshAfter: Double = -.infinity
 }
@@ -58,12 +59,19 @@ struct RuntimePolicy {
         }
         let fresh = s.sample.valid && s.sample.time >= input.freshAfter &&
             input.time >= s.lastValid && input.time - s.lastValid < 0.5
-        guard !input.suspended, fresh else {
+        guard !input.suspended, fresh || input.wakeAnimation else {
             clearSince = nil
             inClearZone = false
             effectSince = nil
             hasSeenEffect = false
             result.state = .suspended
+            return result
+        }
+        if input.wakeAnimation {
+            result.state = .moving
+            result.showsEffect = true
+            result.animates = true
+            result.captureFPS = mode.activeCaptureFPS
             return result
         }
         let clear = HingeMotion.remaining(angle: s.sample.angle, endpoint: input.endpoint) == 0 && !input.preview

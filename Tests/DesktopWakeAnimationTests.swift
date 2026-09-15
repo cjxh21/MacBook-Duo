@@ -7,15 +7,25 @@ struct DesktopWakeAnimationTests {
         animation.event(reason: "display", pausing: false, eligible: true, at: 0)
         assert(!animation.isActive, "A wake without sleep must not animate")
         animation.event(reason: "display", pausing: true, eligible: true, at: 1)
+        assert(animation.needsCover && !animation.isActive, "Prepare black coverage before wake")
         animation.event(reason: "display", pausing: false, eligible: true, at: 2)
-        assert(animation.tilt(at: 3) == 65, "Wait for the fresh GPU frame")
+        assert(animation.tilt(at: 3) == 90, "Wait for the fresh GPU frame")
+        assert(animation.needsCover, "Keep black coverage until the first GPU frame")
         animation.present(at: 3, duration: 2)
-        assert(abs(animation.tilt(at: 4)! - 8.125) < 0.0001)
+        assert(!animation.needsCover, "A GPU-ready animation takes over from the cover")
+        assert(abs(animation.tilt(at: 4)! - 45) < 0.0001)
         animation.event(reason: "display", pausing: false, eligible: true, at: 4)
         assert(animation.deadline == 5, "Duplicate wake must not restart")
         animation.advance(at: 5, allowed: true)
         assert(!animation.isActive)
         for duration in DesktopWakeAnimation.durations {
+            var previousAngle = 90.0
+            for step in 0...100 {
+                let angle = WakeAnimationTiming.tilt(elapsed: duration * Double(step) / 100, duration: duration)
+                assert(angle <= previousAngle + 0.000001 && angle >= 0)
+                previousAngle = angle
+            }
+            assert(abs(WakeAnimationTiming.tilt(elapsed: duration / 2, duration: duration) - 45) < 0.00001)
             animation.event(reason: "display", pausing: true, eligible: true, at: 10)
             animation.event(reason: "display", pausing: false, eligible: true, at: 11)
             animation.present(at: 12, duration: duration)
@@ -30,8 +40,14 @@ struct DesktopWakeAnimationTests {
         assert(!animation.isActive, "Lock/unlock must not replay the desktop effect")
         animation.event(reason: "display", pausing: true, eligible: true, at: 30)
         animation.event(reason: "display", pausing: false, eligible: true, at: 31)
-        animation.advance(at: 39, allowed: true)
+        animation.advance(at: 33, allowed: true)
         assert(!animation.isActive, "Missing fresh content must expire")
+        assert(!animation.needsCover, "A late capture must release the cover and skip replay")
+        animation.event(reason: "display", pausing: true, eligible: true, at: 35)
+        animation.event(reason: "display", pausing: false, eligible: true, at: 36)
+        animation.present(at: 38.1, duration: 3)
+        assert(!animation.isActive && !animation.needsCover,
+               "A late GPU callback must not restart the animation before the timeout timer runs")
         assert(DesktopWakeAnimation.validDuration(.nan) == 0.9)
         // Idle sleep followed by missing resume notifications: OS state repairs
         // stale pause flags, which must also release the pending animation.
@@ -79,7 +95,7 @@ struct DesktopWakeAnimationTests {
         reconcile(asleep: true, locked: false, at: 60)
         assert(paused == ["display"] && !recovered.isActive)
         reconcile(asleep: false, locked: false, at: 61)
-        assert(paused.isEmpty && recovered.tilt(at: 61) == 65)
+        assert(paused.isEmpty && recovered.tilt(at: 61) == 90)
         recovered.present(at: 61.5, duration: 3)
         reconcile(asleep: false, locked: false, at: 62)
         assert(recovered.deadline == 64.5)
@@ -97,7 +113,7 @@ struct DesktopWakeAnimationTests {
         reconcile(asleep: false, locked: true, at: 71)
         assert(!recovered.isActive, "Never begin presentation over a locked session")
         reconcile(asleep: false, locked: false, at: 71.2)
-        assert(recovered.tilt(at: 71.2) == 65, "Idle sleep's temporary lock must not discard the desktop wake")
+        assert(recovered.tilt(at: 71.2) == 90, "Idle sleep's temporary lock must not discard the desktop wake")
         recovered.present(at: 71.3, duration: 3)
         assert(recovered.deadline == 74.3)
         reconcile(asleep: false, locked: false, at: 75)

@@ -31,6 +31,8 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
     private var maintenanceInterval: Double?
     private var menuOpen = false
     private var overlay: NSPanel?
+    private var wakeCover: NSPanel?
+    private var wakePresentationCount = 0
     private var renderer: GlassMetalView?
     private var stream: SCStream?
     private var ownApplication: SCRunningApplication?
@@ -235,6 +237,7 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
     func previewWakeAnimation() {
         guard !model.permissionsPreparing, !Self.sessionLocked else { return }
         refreshSystemState()
+        allowPermissionPrompt = true
         if !enabled { start() }
         guard enabled, pauseReasons.isEmpty else { return }
         previewPending = false; previewUntil = -.infinity
@@ -286,6 +289,8 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
         guard !shuttingDown else { return }
         shuttingDown = true
         enabled = false
+        desktopWake.cancel()
+        wakeCover?.orderOut(nil)
         desiredFPS = 0; revision += 1
         hideEffect(invalidate: true)
         if let stream { Task { try? await stream.stopCapture() } }
@@ -310,6 +315,12 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
         }
         enabled = true
         model.globalRunning = true
+        // Compile both Metal pipelines while the desktop is awake, so wake
+        // capture does not have to pay the shader compilation cost.
+        if renderer == nil, let screen = Self.internalScreen {
+            do { try prepareRenderer(screen: screen) }
+            catch { stop(reason: error.localizedDescription); return }
+        }
         failures = 0; retryAt = 0
         allowPermissionPrompt = !automatically
         let resumedFromSettings = pauseReasons.remove("settings") != nil
@@ -332,6 +343,7 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
     func stop(reason: String) {
         enabled = false
         desktopWake.cancel()
+        wakeCover?.orderOut(nil)
         model.globalRunning = false
         previewPending = false; previewUntil = -.infinity
         policy.reset()
@@ -351,6 +363,32 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
         guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
         return session[kCGSessionOnConsoleKey as String] as? Bool == true
     }
+    private static var internalScreen: NSScreen? {
+        NSScreen.screens.first {
+            guard let id = $0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return false }
+            return CGDisplayIsBuiltin(id.uint32Value) != 0
+        }
+    }
+    private func updateWakeCover() {
+        guard enabled, desktopWake.needsCover, Self.sessionOnConsole,
+              let screen = overlay?.screen ?? Self.internalScreen else {
+            wakeCover?.orderOut(nil)
+            return
+        }
+        if wakeCover == nil {
+            let panel = NSPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            panel.hidesOnDeactivate = false; panel.isReleasedWhenClosed = false
+            panel.backgroundColor = .black; panel.isOpaque = true; panel.hasShadow = false
+            panel.ignoresMouseEvents = true
+            // This is a blank window in the user's desktop, below the system
+            // lock screen. It contains no captured pixels while locked.
+            panel.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 2)
+            panel.collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+            wakeCover = panel
+        }
+        wakeCover?.setFrame(screen.frame, display: false)
+        if wakeCover?.isVisible != true { wakeCover?.orderFrontRegardless() }
+    }
     private func systemEvent(reason: String, pausing: Bool) {
         if reason == "lock", pausing, !pauseReasons.contains("display"),
            CGDisplayIsAsleep(CGMainDisplayID()) != 0 {
@@ -362,6 +400,7 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
         desktopWake.event(reason: reason, pausing: pausing,
             eligible: enabled && Self.sessionOnConsole,
             at: CACurrentMediaTime())
+        updateWakeCover()
         if pausing { pauseReasons.insert(reason) } else { pauseReasons.remove(reason) }
         freshAfter = CACurrentMediaTime()
         model.sensor.reset(invalidate: true)
@@ -429,6 +468,7 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
         schedulerUpdates += 1
         let now = CACurrentMediaTime()
         desktopWake.advance(at: now, allowed: enabled && Self.sessionOnConsole)
+        updateWakeCover()
         let screenFPS = overlay?.screen?.maximumFramesPerSecond ??
             NSScreen.screens.first(where: { screen in
                 guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return false }
@@ -437,7 +477,8 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
         let input = RuntimeInput(time: now, enabled: enabled, suspended: !pauseReasons.isEmpty,
             settingsVisible: model.settingsVisible, recording: model.recorder.status().enabled,
             snapshot: motionSnapshot(at: now), endpoint: model.openAngle, mode: model.performanceMode,
-            onAC: power.onAC, lowPower: power.lowPower, preview: desktopWake.isActive || previewPending || now < previewUntil,
+            onAC: power.onAC, lowPower: power.lowPower, preview: previewPending || now < previewUntil,
+            wakeAnimation: desktopWake.isActive,
             screenFPS: screenFPS, freshAfter: freshAfter)
         let previousState = state
         decision = policy.update(input)
@@ -652,6 +693,7 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
         guard view.isOperational else { throw GlobalError.noGPU }
         view.invalidateContent()
         view.angleProvider = { [weak self] in self?.targetAngle(at: CACurrentMediaTime()) ?? 0 }
+        view.wakeAngleProvider = { [weak self] in self?.desktopWake.tilt(at: CACurrentMediaTime()) }
         view.sensorTimeProvider = { [weak self] in self?.motionSnapshot(at: CACurrentMediaTime()).sample.time ?? 0 }
         view.movingProvider = { [weak self] in
             guard let self else { return false }
@@ -674,8 +716,8 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
               renderer?.readyForDisplay == true, !Self.sessionLocked else { hideEffect(); return }
         let now = CACurrentMediaTime()
         let sample = motionSnapshot(at: now)
-        guard sample.sample.valid, sample.sample.time >= freshAfter, now - sample.lastValid < 0.5,
-              desktopWake.isActive || previewPending || now < previewUntil || HingeMotion.remaining(angle: sample.sample.angle, endpoint: model.openAngle) > 0 else {
+        guard desktopWake.isActive || (sample.sample.valid && sample.sample.time >= freshAfter && now - sample.lastValid < 0.5 &&
+              (previewPending || now < previewUntil || HingeMotion.remaining(angle: sample.sample.angle, endpoint: model.openAngle) > 0)) else {
             hideEffect(); return
         }
         if let start = presentationStartedAt {
@@ -683,11 +725,21 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
             if firstPresentationWaits.count > 100 { firstPresentationWaits.removeFirst() }
         }
         presentationStartedAt = nil
+        let startingWake = desktopWake.isActive && desktopWake.needsCover
         desktopWake.present(at: now, duration: model.wakeAnimationDuration)
-        if desktopWake.isActive {
+        if startingWake && !desktopWake.isActive {
+            hideEffect()
+            update()
+            return
+        }
+        if startingWake {
+            wakePresentationCount += 1
             NSLog("Duo wake presented: duration=%.1f", model.wakeAnimationDuration)
         }
         overlay?.alphaValue = effectOpacity(at: now)
+        // Release the pre-sleep black cover only after the folded first frame
+        // is GPU-complete and the animation panel is opaque.
+        updateWakeCover()
         if previewPending { previewPending = false; previewUntil = now + 8 }
         update()
     }
@@ -784,6 +836,8 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
             "screenCaptureAllowed": CGPreflightScreenCaptureAccess(), "settingsVisible": model.settingsVisible,
             "pauseReasons": pauseReasons.sorted(), "wakeAnimationActive": desktopWake.isActive,
             "wakeAnimationDuration": model.wakeAnimationDuration,
+            "wakeCoverVisible": wakeCover?.isVisible == true,
+            "wakePresentationCount": wakePresentationCount,
             "wakeAnimationTilt": desktopWake.tilt(at: CACurrentMediaTime()) ?? 0,
             "overlayVisible": overlay?.isVisible == true && (overlay?.alphaValue ?? 0) > 0,
             "overlayOpacity": overlay?.alphaValue ?? 0,

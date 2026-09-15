@@ -113,7 +113,7 @@ private struct SetupView: View {
                 .disabled(model.permissionsPreparing)
             }
             SettingsCard("息屏唤醒动画") {
-                Text("桌面与锁屏息屏后唤醒，使用相同的翻盖动画耗时。")
+                Text("息屏唤醒时，画面从屏幕下沿展开。桌面与锁屏共用动画耗时。")
                     .font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Picker("动画耗时", selection: $model.wakeAnimationDuration) {

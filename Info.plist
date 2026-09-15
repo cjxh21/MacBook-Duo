@@ -19,9 +19,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.8.1</string>
+    <string>0.8.2</string>
     <key>CFBundleVersion</key>
-    <string>9</string>
+    <string>10</string>
     <key>NSScreenCaptureUsageDescription</key>
     <string>实时捕获桌面，在屏幕开合时生成玻璃效果。内容仅在本机处理，不保存录像。</string>
     <key>NSPrefersDisplaySafeAreaCompatibility</key>

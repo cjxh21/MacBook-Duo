@@ -128,6 +128,16 @@ struct RuntimePolicyTests {
         assert(d.showsEffect && d.captureFPS > 0 && !d.animates, "Fixed preview must not force continuous drawing")
         input.preview = false
         assert(!policy.update(input).showsEffect)
+        input.wakeAnimation = true
+        input.snapshot = MotionSnapshot()
+        d = policy.update(input)
+        assert(d.showsEffect && d.animates && d.captureFPS > 0,
+               "A procedural wake must start capture without waiting for HID data")
+        input.suspended = true
+        d = policy.update(input)
+        assert(!d.showsEffect && d.captureFPS == 0, "Wake capture still respects lock and session suspension")
+        input.suspended = false; input.wakeAnimation = false
+        assert(policy.update(input).state == .suspended, "Physical hinge rendering still requires fresh data")
         print("PASS: off/recording/settings, stable deadlines, prewarm, movement/stop, calibration, all power modes, screen refresh, pause/wake/freshness and preview")
     }
 }

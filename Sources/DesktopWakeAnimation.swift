@@ -14,10 +14,11 @@ struct DesktopWakeAnimation {
     private var startedAt: Double?
     private var duration = 0.9
     var isActive: Bool { pendingAt != nil || startedAt != nil }
+    var needsCover: Bool { armed || awaitingUnlockAt != nil || pendingAt != nil }
     var deadline: Double? {
         if let start = startedAt { return start + duration }
         if let wake = awaitingUnlockAt { return wake + 1 }
-        return pendingAt.map { $0 + 8 }
+        return pendingAt.map { $0 + 2 }
     }
     mutating func cancel() {
         sleepReasons.removeAll()
@@ -64,13 +65,14 @@ struct DesktopWakeAnimation {
         if !allowed || deadline.map({ now >= $0 }) == true { cancel() }
     }
     mutating func present(at now: Double, duration: Double) {
-        guard pendingAt != nil else { return }
+        guard let pending = pendingAt else { return }
+        guard now - pending < 2 else { cancel(); return }
         pendingAt = nil
         startedAt = now
         self.duration = Self.validDuration(duration)
     }
     func tilt(at now: Double) -> Double? {
-        if pendingAt != nil { return 65 }
+        if pendingAt != nil { return WakeAnimationTiming.closedAngle }
         guard let start = startedAt else { return nil }
         return WakeAnimationTiming.tilt(elapsed: now - start, duration: duration)
     }

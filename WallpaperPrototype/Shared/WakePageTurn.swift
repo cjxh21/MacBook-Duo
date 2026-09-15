@@ -36,6 +36,8 @@ struct WakePageTurn {
                 }
             }
         }
+        // Hold the prepared black frame until fresh data can begin the turn.
+        if pendingAt != nil && locked { return WakeAnimationTiming.closedAngle }
         guard let start = startedAt else { return nil }
         guard locked, let sample, sample.fresh(at: now),
               sample.angle >= HingeMotion.clearAngle(endpoint: sample.endpoint),
