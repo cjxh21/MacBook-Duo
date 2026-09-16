@@ -452,7 +452,7 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
     }
 
     private func effectOpacity(at now: Double) -> Double {
-        if desktopWake.isActive { return 1 }
+        if desktopWake.isActive { return desktopWake.overlayOpacity(at: now) }
         if previewPending || now < previewUntil { return 1 }
         let snapshot = motionSnapshot(at: now)
         guard snapshot.sample.valid, now - snapshot.lastValid < 0.5 else { return 0 }
@@ -623,7 +623,11 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
     }
     private func configuration(fps: Int) -> SCStreamConfiguration {
         let config = SCStreamConfiguration()
-        config.width = Int(captureSize.width); config.height = Int(captureSize.height)
+        // Wake ends by revealing the real desktop. Match its backing pixels
+        // so removing the overlay cannot pop from a 1x image to Retina text.
+        let wakeScale = desktopWake.isActive ? (overlay?.screen?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1) : 1
+        config.width = Int(captureSize.width * wakeScale)
+        config.height = Int(captureSize.height * wakeScale)
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps))
         config.queueDepth = 3; config.showsCursor = false; config.capturesAudio = false
@@ -726,7 +730,8 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
         }
         presentationStartedAt = nil
         let startingWake = desktopWake.isActive && desktopWake.needsCover
-        desktopWake.present(at: now, duration: model.wakeAnimationDuration)
+        desktopWake.present(at: now, duration: model.wakeAnimationDuration,
+                            lidAngle: sample.sample.valid ? sample.sample.angle : model.openAngle)
         if startingWake && !desktopWake.isActive {
             hideEffect()
             update()
@@ -744,6 +749,12 @@ final class GlobalDesktopController: NSObject, @preconcurrency SCStreamOutput, S
         update()
     }
     private func didRender(_ timing: RenderTiming) {
+        // Drive handoff from completed frames, not the low-frequency policy
+        // timer. The panel is already transparent when its lifetime ends.
+        if timing.succeeded, desktopWake.isActive, renderer?.readyForDisplay == true,
+           !desktopWake.needsCover {
+            overlay?.alphaValue = desktopWake.overlayOpacity(at: CACurrentMediaTime())
+        }
         renderFrames += 1
         gpuSeconds += timing.gpuDuration
         encodeSeconds += timing.submitted - timing.encodeStart

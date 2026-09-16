@@ -41,9 +41,27 @@ enum WakeAnimationTiming {
     static func validDuration(_ value: Double) -> Double {
         durations.contains(value) ? value : 0.9
     }
-    static func tilt(elapsed: Double, duration: Double) -> Double {
-        let progress = min(1, max(0, elapsed / validDuration(duration)))
-        let eased = progress * progress * progress * (progress * (progress * 6 - 15) + 10)
-        return closedAngle * (1 - eased)
+    static func openingTilt(lidAngle: Double) -> Double {
+        guard lidAngle.isFinite else { return 60 }
+        return min(closedAngle, max(0, 180 - lidAngle))
+    }
+    static func handoffDuration(_ duration: Double) -> Double {
+        min(0.25, validDuration(duration) * 0.25)
+    }
+    static func overlayOpacity(elapsed: Double, duration: Double) -> Double {
+        let total = validDuration(duration), handoff = handoffDuration(duration)
+        let t = min(1, max(0, (elapsed - (total - handoff)) / handoff))
+        return 1 - t * t * (3 - 2 * t)
+    }
+    static func tilt(elapsed: Double, duration: Double, initialTilt: Double = closedAngle) -> Double {
+        // Finish geometry first. Reserve a short, perfectly aligned clear hold
+        // for the desktop crossfade (and the wallpaper's pipeline handoff).
+        let openingDuration = validDuration(duration) - handoffDuration(duration)
+        let progress = min(1, max(0, elapsed / openingDuration))
+        // Front-load the opening, then settle gently into the clear frame.
+        // The time warp and quintic both retain zero endpoint velocity.
+        let t = 1 - (1 - progress) * (1 - progress)
+        let eased = t * t * t * (t * (t * 6 - 15) + 10)
+        return min(closedAngle, max(0, initialTilt)) * (1 - eased)
     }
 }

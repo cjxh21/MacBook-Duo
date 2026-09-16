@@ -8,6 +8,7 @@ struct WakePageTurn {
     private var startedAt: Double?
     private var slept = false
     private var duration = 0.9
+    private var initialTilt = 60.0
 
     mutating func setAwake(_ value: Bool, at now: Double) {
         guard value != awake else { return }
@@ -29,10 +30,12 @@ struct WakePageTurn {
                 pendingAt = nil
             } else if locked, let sample, sample.fresh(at: now) {
                 pendingAt = nil
-                // A lid still opening should keep following the real sensor.
+                // A physical lid opening belongs to the original sensor-driven
+                // glass effect. Only wake at an already-open lid uses the timer.
                 if sample.angle >= HingeMotion.clearAngle(endpoint: sample.endpoint) {
                     startedAt = now
                     duration = WakeAnimationTiming.validDuration(sample.wakeDuration)
+                    initialTilt = WakeAnimationTiming.openingTilt(lidAngle: sample.angle)
                 }
             }
         }
@@ -45,6 +48,6 @@ struct WakePageTurn {
             startedAt = nil
             return nil
         }
-        return WakeAnimationTiming.tilt(elapsed: now - start, duration: duration)
+        return WakeAnimationTiming.tilt(elapsed: now - start, duration: duration, initialTilt: initialTilt)
     }
 }

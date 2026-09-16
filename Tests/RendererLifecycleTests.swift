@@ -62,7 +62,7 @@ struct RendererLifecycleTests {
         window.alphaValue = 0
         view.receive(buffer!); view.renderingEnabled = true; view.draw(); run(0.4)
         precondition(wakeReady && !cover.isVisible, "The folded first frame must become ready behind the black cover")
-        precondition(view.pyramidBuildCount == priorPyramids, "Wake frames must skip the blur pyramid")
+        precondition(view.pyramidBuildCount == priorPyramids + 1, "Wake frames prepare blur for the fresh source once")
         wakeAngle = 45; run(0.15)
         wakeAngle = 0; run(0.15)
         view.wakeAngleProvider = nil; view.movingProvider = nil; view.continuousRendering = false

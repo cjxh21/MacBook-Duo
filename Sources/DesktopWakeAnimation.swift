@@ -13,6 +13,7 @@ struct DesktopWakeAnimation {
     private var pendingAt: Double?
     private var startedAt: Double?
     private var duration = 0.9
+    private var initialTilt = WakeAnimationTiming.closedAngle
     var isActive: Bool { pendingAt != nil || startedAt != nil }
     var needsCover: Bool { armed || awaitingUnlockAt != nil || pendingAt != nil }
     var deadline: Double? {
@@ -64,16 +65,21 @@ struct DesktopWakeAnimation {
     mutating func advance(at now: Double, allowed: Bool) {
         if !allowed || deadline.map({ now >= $0 }) == true { cancel() }
     }
-    mutating func present(at now: Double, duration: Double) {
+    mutating func present(at now: Double, duration: Double, lidAngle: Double = 90) {
         guard let pending = pendingAt else { return }
         guard now - pending < 2 else { cancel(); return }
         pendingAt = nil
         startedAt = now
         self.duration = Self.validDuration(duration)
+        initialTilt = WakeAnimationTiming.openingTilt(lidAngle: lidAngle)
+    }
+    func overlayOpacity(at now: Double) -> Double {
+        guard let start = startedAt else { return 1 }
+        return WakeAnimationTiming.overlayOpacity(elapsed: now - start, duration: duration)
     }
     func tilt(at now: Double) -> Double? {
         if pendingAt != nil { return WakeAnimationTiming.closedAngle }
         guard let start = startedAt else { return nil }
-        return WakeAnimationTiming.tilt(elapsed: now - start, duration: duration)
+        return WakeAnimationTiming.tilt(elapsed: now - start, duration: duration, initialTilt: initialTilt)
     }
 }

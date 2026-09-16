@@ -232,11 +232,11 @@ final class GlassMetalView: MTKView, MTKViewDelegate {
             }
         }
         guard let texture else { isPaused = true; return }
-        if imageDirty && wakeAngle == nil {
+        if imageDirty {
             guard pyramid.encode(source: texture, command: command) else { isPaused = true; onFailure?(); return }
             pyramidBuildCount += 1; imageDirty = false
         }
-        guard wakeAngle != nil || pyramid.levels.count == 8,
+        guard pyramid.levels.count == 8,
               let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return }
         let now = CACurrentMediaTime()
         if let wakeAngle { displayed = Float(wakeAngle) }
@@ -247,8 +247,7 @@ final class GlassMetalView: MTKView, MTKViewDelegate {
         var p = [Float(drawableSize.width), Float(drawableSize.height), displayed, frost, eyeDistance,
                  Float(texture.width) / Float(texture.height), softness, Float(opacityProvider?() ?? 1)]
         encoder.setRenderPipelineState(wakeAngle == nil ? pipeline : wakePipeline)
-        if wakeAngle != nil { encoder.setFragmentTexture(texture, index: 0) }
-        else { for (i, level) in pyramid.levels.enumerated() { encoder.setFragmentTexture(level, index: i) } }
+        for (i, level) in pyramid.levels.enumerated() { encoder.setFragmentTexture(level, index: i) }
         encoder.setFragmentBytes(&p, length: p.count * MemoryLayout<Float>.size, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3); encoder.endEncoding()
         command.present(drawable)
@@ -318,26 +317,44 @@ final class GlassMetalView: MTKView, MTKViewDelegate {
     // A rigid image plane opens around the bottom edge. This is the inverse
     // perspective projection of that plane, with black outside its silhouette.
     // Physical hinge motion continues to use glassMain below.
-    fragment float4 wakeMain(VertexOut in [[stage_in]], texture2d<float> source [[texture(0)]], constant Params& p [[buffer(0)]]) {
+    fragment float4 wakeMain(VertexOut in [[stage_in]], array<texture2d<float>, 8> tex [[texture(0)]], constant Params& p [[buffer(0)]]) {
         constexpr sampler s(filter::linear, address::clamp_to_edge);
         float screenAspect = p.size.x / p.size.y;
         float2 fit = screenAspect > p.imageAspect ? float2(1, screenAspect / p.imageAspect) : float2(p.imageAspect / screenAspect, 1);
-        if (p.angle <= 0.00001) return float4(source.sample(s, (in.uv - 0.5) / fit + 0.5).rgb, 1);
+        if (p.angle <= 0.00001) return float4(tex[0].sample(s, (in.uv - 0.5) / fit + 0.5).rgb, 1);
         float angle = clamp(p.angle, 0.0f, 90.0f) * M_PI_F / 180;
         float c = cos(angle), sn = sin(angle), eye = max(1.1f, p.eye);
         float fromHinge = 1 - in.uv.y;
         float projectedHeight = eye * c / (eye + sn);
-        if (fromHinge > projectedHeight + 1 / p.size.y) return float4(0, 0, 0, 1);
+        // Gaussian silhouette instead of clipping at a rigid straight edge.
+        float edgeSigma = max(0.5f, p.size.y * 0.018 * sn * max(0.5f, p.softness));
+        if (fromHinge > projectedHeight + 4 * edgeSigma / p.size.y) return float4(0, 0, 0, 1);
         float denominator = eye * c - fromHinge * sn;
         if (c < 0.0001 || denominator <= 0.0001) return float4(0, 0, 0, 1);
         float height = fromHinge * eye / denominator;
         float scale = eye / (eye + height * sn);
         float2 plane = float2(0.5 + (in.uv.x - 0.5) / scale, 1 - height);
         float2 edge = float2(0.5 * scale - abs(in.uv.x - 0.5), projectedHeight - fromHinge);
-        float2 aa = 1 / p.size;
-        float2 coverageXY = smoothstep(-aa * 0.5, aa * 0.5, edge);
-        float coverage = coverageXY.x * coverageXY.y;
-        float3 color = source.sample(s, (plane - 0.5) / fit + 0.5).rgb;
+        float2 edgePixels = edge * p.size;
+        float2 feather = max(float2(edgeSigma), 0.35 * fwidth(edgePixels));
+        float2 coverageXY = normalCDF(edgePixels / feather);
+        // Subpixel feathering otherwise leaves a dark rim until the exact-zero
+        // branch, where it disappears in one frame. Converge before handoff.
+        float coverage = mix(1.0f, coverageXY.x * coverageXY.y,
+                             smoothstep(0.0f, 4.0f, p.angle));
+        float2 uv = (plane - 0.5) / fit + 0.5;
+        // Fade Gaussian variance smoothly with the opening angle. Independent
+        // of the physical hinge frost preference, identical on both surfaces.
+        float progress = smoothstep(0.0f, 90.0f, p.angle);
+        float sigma = 0.025 * float(tex[0].get_height()) * progress;
+        float variance = sigma * sigma;
+        float firstVariance = 3.105;
+        float level = clamp(0.5 * log2(1.0 + 3.0 * variance / firstVariance), 0.0f, 7.0f);
+        uint lo = uint(floor(level)), hi = min(lo + 1, 7u);
+        float loVariance = firstVariance * (exp2(2.0 * float(lo)) - 1.0) / 3.0;
+        float hiVariance = firstVariance * (exp2(2.0 * float(hi)) - 1.0) / 3.0;
+        float blend = clamp((variance - loVariance) / max(0.00001f, hiVariance - loVariance), 0.0f, 1.0f);
+        float3 color = mix(tex[lo].sample(s, uv).rgb, tex[hi].sample(s, uv).rgb, blend);
         color *= 1 - 0.12 * sn;
         return float4(color * coverage, 1);
     }
