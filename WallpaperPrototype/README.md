@@ -24,7 +24,7 @@
 
 两个选项：`Duo · 动态验证` 用自动角度循环检验显示；`Duo · 随开合变化` 仅锁屏时按角度变形，普通桌面显示清晰测试图。导入自定义图片后，第二项显示为 `Duo · 随开合变化（自定义）`。无新角度时 0.5 秒内回到清晰。锁屏墙纸只改变背景，时钟、密码框和输入控件仍由 macOS 绘制。
 
-角度桥使用扩展 Documents 下 `duo-state-v2.bin`，80 字节 mmap + flock；主 App 只打开扩展已创建的文件，不主动伪造沙箱容器。墙纸读取正式版同一份校准、预测、磨砂和边缘柔和度设置。进入息屏时提交一次全黑的折叠起始帧，随后停止绘制并保留轻量计时器等待唤醒。
+角度桥使用 `~/Library/Application Support/MacBook Duo/Wallpaper/duo-state-v2.bin`，80 字节 mmap + flock；主 App 只打开扩展已创建的文件，不主动伪造沙箱容器。墙纸读取正式版同一份校准、预测、磨砂和边缘柔和度设置。进入息屏时提交一次全黑的折叠起始帧，随后停止绘制并保留轻量计时器等待唤醒。
 
 ## 构建和离屏测试
 
@@ -73,4 +73,6 @@ pluginkit -r "$PWD/WallpaperPrototype/build/Duo Wallpaper Lab.app/Contents/Exten
 
 ## 0.9.7：独立的开盖渲染
 
-唤醒通过共享的 `wakeMain` 着色器把整张图像作为单个平面，绕屏幕下沿单向展开，使用两端平滑的统一时间曲线。唤醒帧不构建磨砂模糊层，完全展开后与正常图像像素一致。真实铰链运动继续使用 `glassMain`。墙纸被隐藏时的 activity suspension 不再被当成显示器息屏。
+唤醒通过共享的 `wakeMain` 着色器把整张图像作为单个平面，绕屏幕下沿单向展开，使用两端平滑的统一时间曲线。唤醒帧复用高斯金字塔，从模糊逐渐变清晰，完全展开后与正常图像像素一致。真实铰链运动继续使用 `glassMain`。墙纸被隐藏时的 activity suspension 不再被当成显示器息屏。
+
+共享壁纸和角度文件位于专用 Wallpaper 目录。扩展通过仅限此目录的文件访问 entitlement 读写；主应用不再访问扩展私有容器。扩展首次启动迁移旧壁纸，不覆盖新导入，不迁移过期角度。此本机开发方案使用 Apple 文档中的 temporary-exception.files.home-relative-path.read-write，正式分发应评估 App Group。

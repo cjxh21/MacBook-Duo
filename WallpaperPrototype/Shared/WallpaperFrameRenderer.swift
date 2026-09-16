@@ -57,7 +57,7 @@ final class WallpaperFrameRenderer {
         var wrapper: CVMetalTexture?
         guard CVMetalTextureCacheCreateTextureFromImage(nil, cache, buffer, nil, .bgra8Unorm, width, height, 0, &wrapper) == kCVReturnSuccess,
               let wrapper, let texture = CVMetalTextureGetTexture(wrapper), let command = queue.makeCommandBuffer() else { throw Self.failure("IOSurface texture") }
-        if !pyramidReady && wakeAngle == nil {
+        if !pyramidReady {
             guard pyramid.encode(source: source, command: command) else { throw Self.failure("Gaussian pyramid") }
         }
         let pass = MTLRenderPassDescriptor()
@@ -66,8 +66,7 @@ final class WallpaperFrameRenderer {
         pass.colorAttachments[0].storeAction = .store
         guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw Self.failure("Render encoder") }
         encoder.setRenderPipelineState(wakeAngle == nil ? pipeline : wakePipeline)
-        if wakeAngle != nil { encoder.setFragmentTexture(source, index: 0) }
-        else { for (index, level) in pyramid.levels.enumerated() { encoder.setFragmentTexture(level, index: index) } }
+        for (index, level) in pyramid.levels.enumerated() { encoder.setFragmentTexture(level, index: index) }
         var params: [Float] = [Float(width), Float(height), Float(wakeAngle ?? tilt), Float(frost), 2.4,
                               Float(source.width) / Float(source.height), Float(softness), Float(opacity)]
         encoder.setFragmentBytes(&params, length: params.count * 4, index: 0)
@@ -75,7 +74,7 @@ final class WallpaperFrameRenderer {
         encoder.endEncoding(); command.commit(); command.waitUntilCompleted()
         withExtendedLifetime(wrapper) {}
         guard command.status == .completed else { throw Self.failure(command.error?.localizedDescription ?? "GPU failure") }
-        if !pyramidReady && wakeAngle == nil { pyramidReady = true; pyramidBuilds += 1 }
+        if !pyramidReady { pyramidReady = true; pyramidBuilds += 1 }
         frameCount += 1; lastBuffer = buffer
         return buffer
     }

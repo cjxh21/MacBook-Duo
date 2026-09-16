@@ -122,6 +122,7 @@ final class WallpaperXPCHandler: NSObject, WallpaperExtensionXPCProtocol {
         // Notifications can be missed; keep polling even while asleep.
         setAwake(CGDisplayIsAsleep(CGMainDisplayID()) == 0)
         guard wakeTurn.awake else { return }
+        refreshLockState()
         if bridge == nil { bridge = try? AngleBridge(url: dataDirectory().appendingPathComponent(DuoWallpaperPaths.angleBridgeName), create: false) }
         let wakeTilt = wakeTurn.tilt(at: CACurrentMediaTime(), locked: locked, sample: bridge?.read())
         for key in surfaces.keys { do { try draw(key, wakeTilt: wakeTilt) } catch { extensionLog("render: \(error)") } }

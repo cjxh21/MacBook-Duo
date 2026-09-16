@@ -21,7 +21,7 @@ func dataDirectory() -> URL {
     if ProcessInfo.processInfo.environment["DUO_RUNTIME_CHECK"] == "1" {
         return URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("WallpaperPrototype/build/validation/runtime-data")
     }
-    return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    return DuoWallpaperPaths.documentsDirectory
 }
 func makeSnapshot(_ buffer: CVPixelBuffer) -> AnyObject? {
     guard let ref = CVPixelBufferGetIOSurface(buffer) else { return nil }

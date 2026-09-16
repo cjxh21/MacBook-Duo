@@ -38,7 +38,7 @@ info = dict(
 (extension / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
 entitlements = pathlib.Path(sys.argv[2])
 entitlements.parent.mkdir(parents=True, exist_ok=True)
-entitlements.write_bytes(plistlib.dumps({"com.apple.security.app-sandbox": True}))
+entitlements.write_bytes(plistlib.dumps({"com.apple.security.app-sandbox": True, "com.apple.security.temporary-exception.files.home-relative-path.read-write": ["/Library/Application Support/MacBook Duo/Wallpaper/"]}))
 PY
 
 swiftc \

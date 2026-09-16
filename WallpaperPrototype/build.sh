@@ -12,7 +12,7 @@ for path,identifier,name,exe,kind in [(sys.argv[1],'studio.prototype.DuoWallpape
  if kind=='APPL':d['LSUIElement']=True
  else:d['EXAppExtensionAttributes']={'EXExtensionPointIdentifier':'com.apple.wallpaper'}
  pathlib.Path(path,'Contents/Info.plist').write_bytes(plistlib.dumps(d))
-pathlib.Path('WallpaperPrototype/build/extension.entitlements').write_bytes(plistlib.dumps({'com.apple.security.app-sandbox':True}))
+pathlib.Path('WallpaperPrototype/build/extension.entitlements').write_bytes(plistlib.dumps({'com.apple.security.app-sandbox':True, 'com.apple.security.temporary-exception.files.home-relative-path.read-write':['/Library/Application Support/MacBook Duo/Wallpaper/']}))
 PY
 swiftc -swift-version 5 -parse-as-library -O -framework AppKit -framework IOKit -framework QuartzCore Sources/HingeMotion.swift Sources/MotionSample.swift Sources/LidAngleSensor.swift "$BASE/Shared/AngleBridge.swift" "$BASE/Shared/WallpaperPaths.swift" "$BASE/Host/Main.swift" -o "$APP/Contents/MacOS/DuoWallpaperHost"
 # ExtensionKit must enter through Foundation bootstrap, as Xcode extensionkit-extension targets do.

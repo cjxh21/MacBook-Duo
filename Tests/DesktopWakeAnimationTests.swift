@@ -3,6 +3,25 @@ import Foundation
 @main
 struct DesktopWakeAnimationTests {
     static func main() {
+        assert(WakeAnimationTiming.openingTilt(lidAngle: 120) == 60)
+        assert(WakeAnimationTiming.openingTilt(lidAngle: 150) == 30)
+        assert(WakeAnimationTiming.openingTilt(lidAngle: 180) == 0)
+        var calibrated = DesktopWakeAnimation()
+        calibrated.event(reason: "display", pausing: true, eligible: true, at: 0)
+        calibrated.event(reason: "display", pausing: false, eligible: true, at: 1)
+        calibrated.present(at: 1, duration: 2, lidAngle: 120)
+        assert(calibrated.tilt(at: 1) == 60)
+        assert(calibrated.tilt(at: 2)! < 15, "Wake must open early and settle slowly")
+        for duration in DesktopWakeAnimation.durations {
+            let fade = WakeAnimationTiming.handoffDuration(duration)
+            let alignedAt = duration - fade
+            assert(WakeAnimationTiming.tilt(elapsed: alignedAt, duration: duration) == 0)
+            assert(WakeAnimationTiming.overlayOpacity(elapsed: alignedAt, duration: duration) == 1)
+            assert(abs(WakeAnimationTiming.overlayOpacity(elapsed: alignedAt + fade / 2, duration: duration) - 0.5) < 0.00001)
+            assert(WakeAnimationTiming.overlayOpacity(elapsed: duration, duration: duration) < 0.00001)
+            assert(WakeAnimationTiming.tilt(elapsed: alignedAt + fade / 2, duration: duration) == 0,
+                   "Never crossfade a geometrically transformed frame")
+        }
         var animation = DesktopWakeAnimation()
         animation.event(reason: "display", pausing: false, eligible: true, at: 0)
         assert(!animation.isActive, "A wake without sleep must not animate")
@@ -13,7 +32,7 @@ struct DesktopWakeAnimationTests {
         assert(animation.needsCover, "Keep black coverage until the first GPU frame")
         animation.present(at: 3, duration: 2)
         assert(!animation.needsCover, "A GPU-ready animation takes over from the cover")
-        assert(abs(animation.tilt(at: 4)! - 45) < 0.0001)
+        assert(abs(animation.tilt(at: 4)! - WakeAnimationTiming.tilt(elapsed: 1, duration: 2)) < 0.0001)
         animation.event(reason: "display", pausing: false, eligible: true, at: 4)
         assert(animation.deadline == 5, "Duplicate wake must not restart")
         animation.advance(at: 5, allowed: true)
@@ -25,7 +44,7 @@ struct DesktopWakeAnimationTests {
                 assert(angle <= previousAngle + 0.000001 && angle >= 0)
                 previousAngle = angle
             }
-            assert(abs(WakeAnimationTiming.tilt(elapsed: duration / 2, duration: duration) - 45) < 0.00001)
+            assert(WakeAnimationTiming.tilt(elapsed: duration / 2, duration: duration) < 22.5)
             animation.event(reason: "display", pausing: true, eligible: true, at: 10)
             animation.event(reason: "display", pausing: false, eligible: true, at: 11)
             animation.present(at: 12, duration: duration)
